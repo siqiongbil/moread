@@ -1,0 +1,39 @@
+{
+  "rules": [
+    {
+      "name": "通用章节",
+      "pattern": "^[ 　\\t]{0,4}(?:序章|序言|楔子|引子|正文(?!完|结)|终章|尾声|后记|番外|第\\s{0,4}[\\d〇零一二两三四五六七八九十百千万壹贰叁肆伍陆柒捌玖拾佰仟]+\\s{0,4}(?:章|节(?!课)|卷|集(?![合和])|部(?![分赛游])|篇(?!张))).{0,30}$",
+      "level": "CHAPTER",
+      "enabled": true,
+      "sortOrder": 10
+    },
+    {
+      "name": "卷级分组",
+      "pattern": "^[ 　\\t]{0,4}(?:第\\s{0,4}[\\d〇零一二两三四五六七八九十百千万]+\\s{0,4}(?:卷|部)|卷\\s{0,4}[\\d〇零一二两三四五六七八九十百千万]+).{0,30}$",
+      "level": "VOLUME",
+      "enabled": true,
+      "sortOrder": 20
+    },
+    {
+      "name": "数字编号",
+      "pattern": "^[ 　\\t]{0,4}\\d{1,4}[、.．]\\s*\\S.{0,28}$",
+      "level": "CHAPTER",
+      "enabled": false,
+      "sortOrder": 30
+    },
+    {
+      "name": "英文章节",
+      "pattern": "^[ 　\\t]{0,4}(?:Chapter|CHAPTER|chapter)\\s+\\d+.{0,30}$",
+      "level": "CHAPTER",
+      "enabled": false,
+      "sortOrder": 40
+    },
+    {
+      "name": "独立数字行",
+      "pattern": "^[ 　\\t]{0,4}\\d{1,4}\\s*$",
+      "level": "CHAPTER",
+      "enabled": false,
+      "sortOrder": 50
+    }
+  ]
+}

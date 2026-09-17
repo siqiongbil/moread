@@ -1,0 +1,47 @@
+# 构建产物
+.gradle/
+build/
+app/build/
+
+# IDE/本地配置
+.idea/
+*.iml
+local.properties
+
+# 签名与机密（绝不入库）
+GitHub默认配置.txt
+
+# 测试与临时
+cbrtest/
+ghs_staging/
+books_push/
+crash_log.txt
+*.log
+
+# 系统
+.DS_Store
+Thumbs.db
+.zcode/
+
+# 误放的书籍文件不入库
+*.epub
+*.mobi
+*.pdf
+*.cbz
+cbr/
+
+# 测试样本例外
+!app/src/test/resources/novel_sample.txt
+
+# 签名与机密（公开仓库绝不入库）
+keystore/
+keystore.properties
+keystore_password.txt
+SECRETS.md
+GitHub默认配置.txt
+crash_log.txt
+*.apk
+*.jks
+
+# 测试用的真实小说样本不入库
+app/src/test/resources/novel_sample.txt

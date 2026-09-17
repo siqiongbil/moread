@@ -1,0 +1,25 @@
+<?xml version="1.0" encoding="utf-8"?>
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+    <!-- 打开的书本 -->
+    <path
+        android:fillColor="#F5F1E6"
+        android:pathData="M54,34 C46,28 34,26 26,28 L26,80 C34,78 46,80 54,86 C62,80 74,78 82,80 L82,28 C74,26 62,28 54,34 Z" />
+    <!-- 书脊 -->
+    <path
+        android:fillColor="#1C2B4A"
+        android:pathData="M53,35 L55,35 L55,85 L53,85 Z" />
+    <!-- 墨点 -->
+    <path
+        android:fillColor="#C0392B"
+        android:pathData="M54,20 m-5,0 a5,5 0 1,0 10,0 a5,5 0 1,0 -10,0" />
+    <!-- 页面行 -->
+    <path
+        android:strokeColor="#8A97B5"
+        android:strokeWidth="2.4"
+        android:strokeLineCap="round"
+        android:pathData="M32,40 L48,42 M32,50 L48,52 M32,60 L46,62 M60,42 L76,40 M60,52 L76,50 M60,62 L74,60" />
+</vector>
