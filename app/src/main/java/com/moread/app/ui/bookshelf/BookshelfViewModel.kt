@@ -76,7 +76,7 @@ class BookshelfViewModel(app: Application) : AndroidViewModel(app) {
     // ---- 应用更新 ----
     // 更新源 = 发布 Release 的代码仓库（硬编码，非机密）
     private val updateOwner = "siqiongbil"
-    private val updateRepo = "booksapp"
+    private val updateRepo = "moread"
 
     companion object {
 

@@ -45,3 +45,5 @@ crash_log.txt
 
 # 测试用的真实小说样本不入库
 app/src/test/resources/novel_sample.txt
+*.py
+keystore_b64.txt
