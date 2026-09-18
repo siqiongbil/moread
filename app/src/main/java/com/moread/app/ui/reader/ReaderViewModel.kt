@@ -387,7 +387,7 @@ class ReaderViewModel(
             }
             val rCached = ensureChapter(rIdx)
             val normOff = if (rCached.entity.charCount > 0) {
-                target.toFloat() / rCached.entity.charCount * rCached.normalizedLen
+                target.toFloat() / rCached.entity.charCount * rCached.normalizedLen + 1f // +1 容差抵消浮点舍入
             } else 0f
             val rPage = rCached.pages.indexOfLast { it.startOffset <= normOff }.coerceAtLeast(0)
             _ui.update { it.copy(chapterIndex = rIdx, pageIndex = rPage) }

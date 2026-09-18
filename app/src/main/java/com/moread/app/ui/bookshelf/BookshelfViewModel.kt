@@ -139,21 +139,56 @@ class BookshelfViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     /** 下载更新 APK 到应用外部文件目录。 */
+    /** 更新下载：前台服务保活 + 应用级作用域，真后台下载完成发通知 */
     fun downloadUpdate(onDone: (Result<java.io.File>) -> Unit) {
         val info = _updateUi.value.latest ?: return
-        viewModelScope.launch {
+        val ctx = getApplication<Application>()
+        com.moread.app.download.KeepAliveService.start(ctx)
+        container.appScope.launch {
             _updateUi.value = _updateUi.value.copy(downloading = true, downloadPct = 0)
             val r = runCatching {
                 val bytes = updateApi.downloadAsset(updateOwner, updateRepo, info.apkAssetId) { d, t ->
                     _updateUi.value = _updateUi.value.copy(downloadPct = (d * 100 / t).toInt())
                 }
-                val dir = getApplication<Application>().getExternalFilesDir(null) ?: error("存储不可用")
+                val dir = ctx.getExternalFilesDir(null) ?: error("存储不可用")
                 val f = java.io.File(dir, info.apkName)
                 f.writeBytes(bytes)
                 f
             }
+            com.moread.app.download.KeepAliveService.stop(ctx)
             _updateUi.value = _updateUi.value.copy(downloading = false, apkFile = r.getOrNull())
+            // 后台完成时发通知（用户可能切走了）
+            r.onSuccess { notifyUpdateReady(ctx) }
             onDone(r)
+        }
+    }
+
+    /** 更新包下载完成通知 */
+    private fun notifyUpdateReady(ctx: Application) {
+        runCatching {
+            val nm = ctx.getSystemService(android.content.Context.NOTIFICATION_SERVICE) as android.app.NotificationManager
+            if (android.os.Build.VERSION.SDK_INT >= 26) {
+                nm.createNotificationChannel(
+                    android.app.NotificationChannel("update_ready", "更新就绪", android.app.NotificationManager.IMPORTANCE_DEFAULT),
+                )
+            }
+            val intent = android.content.Intent(ctx, com.moread.app.MainActivity::class.java)
+            intent.flags = android.content.Intent.FLAG_ACTIVITY_SINGLE_TOP or android.content.Intent.FLAG_ACTIVITY_REORDER_TO_FRONT
+            val pi = android.app.PendingIntent.getActivity(ctx, 0, intent,
+                android.app.PendingIntent.FLAG_UPDATE_CURRENT or android.app.PendingIntent.FLAG_IMMUTABLE)
+            val builder = if (android.os.Build.VERSION.SDK_INT >= 26) {
+                android.app.Notification.Builder(ctx, "update_ready")
+            } else {
+                @Suppress("DEPRECATION")
+                android.app.Notification.Builder(ctx)
+            }
+            nm.notify(2002, builder
+                .setContentTitle("更新已下载完成")
+                .setContentText("点击返回墨阅安装新版本")
+                .setSmallIcon(android.R.drawable.stat_sys_download_done)
+                .setContentIntent(pi)
+                .setAutoCancel(true)
+                .build())
         }
     }
 
