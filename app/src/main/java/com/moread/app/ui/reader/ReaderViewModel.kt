@@ -90,6 +90,8 @@ class ReaderViewModel(
     private var source: BookSource? = null
     private var chapters: List<ChapterEntity> = emptyList()
     private var prefs: ReaderPrefs.Snapshot = ReaderPrefs.Snapshot()
+    /** 待恢复的字符比例（分页无关的精确进度恢复） */
+    private var pendingRestoreRatio: Float? = null
 
     private var viewportW = 0
     private var viewportH = 0
@@ -144,6 +146,8 @@ class ReaderViewModel(
                 return
             }
             val saved = db.progressDao().get(bookId)
+            // 用字符比例恢复（分页无关），而非页码（分页变化后同一页码=不同位置）
+            pendingRestoreRatio = saved?.charRatio?.takeIf { it > 0f }
             _ui.update {
                 it.copy(
                     book = book,
@@ -153,7 +157,7 @@ class ReaderViewModel(
                     error = null,
                 )
             }
-            _ui.update { it.copy(pageIndex = (saved?.page ?: 0).coerceAtMost(chapters.size)) }
+            _ui.update { it.copy(pageIndex = (saved?.page ?: 0)) }
             applyMetrics()
         } catch (t: Throwable) {
             _ui.update { it.copy(loading = false, error = t.message ?: "加载失败") }
@@ -369,10 +373,30 @@ class ReaderViewModel(
         val m = metrics ?: return
         val st = _ui.value
         if (chapters.isEmpty()) return
-        val idx = st.chapterIndex
+
+        // 精确恢复：用字符比例定位（分页无关），而非页码
+        val ratio = pendingRestoreRatio
+        if (ratio != null) {
+            pendingRestoreRatio = null
+            val total = chapters.sumOf { it.charCount }.coerceAtLeast(1)
+            var target = (ratio.coerceIn(0f, 1f) * total).roundToInt()
+            var rIdx = chapters.size - 1
+            for (i in chapters.indices) {
+                if (target < chapters[i].charCount) { rIdx = i; break }
+                target -= chapters[i].charCount
+            }
+            val rCached = ensureChapter(rIdx)
+            val normOff = if (rCached.entity.charCount > 0) {
+                target.toFloat() / rCached.entity.charCount * rCached.normalizedLen
+            } else 0f
+            val rPage = rCached.pages.indexOfLast { it.startOffset <= normOff }.coerceAtLeast(0)
+            _ui.update { it.copy(chapterIndex = rIdx, pageIndex = rPage) }
+        }
+
+        val idx = _ui.value.chapterIndex
         val cached = chapterCache[idx] ?: ensureChapter(idx)
         val pages = cached.pages
-        val pageIdx = st.pageIndex.coerceIn(0, pages.size - 1)
+        val pageIdx = _ui.value.pageIndex.coerceIn(0, pages.size - 1)
 
         val theme = ReaderThemes.byId(prefs.themeId)
         val paint = Paginator.createPaint(m, theme.textArgb, typeface())
