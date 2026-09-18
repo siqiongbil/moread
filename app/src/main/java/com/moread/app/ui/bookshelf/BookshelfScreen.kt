@@ -671,11 +671,27 @@ fun BookshelfScreen(
                 }
             },
             confirmButton = {
+                val ctxUpd = androidx.compose.ui.platform.LocalContext.current
                 TextButton(onClick = {
                     if (noRemind) vm.silenceUpdate(upd.latest!!.tag)
                     updateDismissed = true
-                    shelfTab = 2
-                }) { Text("去更新") }
+                    // 直接下载并安装，不跳设置页
+                    vm.downloadUpdate { r ->
+                        r.onSuccess { f ->
+                            runCatching {
+                                val uri = androidx.core.content.FileProvider.getUriForFile(
+                                    ctxUpd, ctxUpd.packageName + ".fileprovider", f,
+                                )
+                                val i = android.content.Intent(android.content.Intent.ACTION_VIEW).apply {
+                                    setDataAndType(uri, "application/vnd.android.package-archive")
+                                    addFlags(android.content.Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                                    addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK)
+                                }
+                                ctxUpd.startActivity(i)
+                            }
+                        }
+                    }
+                }) { Text("立即更新") }
             },
             dismissButton = {
                 TextButton(onClick = {
