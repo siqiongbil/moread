@@ -10,6 +10,7 @@ class MoreadApp : Application() {
     override fun onCreate() {
         super.onCreate()
         com.tom_roush.pdfbox.android.PDFBoxResourceLoader.init(this)
+        com.moread.app.core.library.LibraryApi.Companion.init(this)
         container = AppContainer(this)
     }
 }

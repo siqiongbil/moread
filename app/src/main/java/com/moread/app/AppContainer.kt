@@ -28,6 +28,8 @@ class AppContainer(context: Context) {
     val gitSettings: GitHubSettings = GitHubSettings(context)
     val splitter: ChapterSplitter = ChapterSplitter()
     val bookstore: Bookstore = Bookstore(context, database)
+    val librarySettings: com.moread.app.data.prefs.LibrarySettings =
+        com.moread.app.data.prefs.LibrarySettings(context)
 
     /** 格式 → 解析器注册表（阶段 2 扩展点） */
     val parsers: Map<String, BookParser> = mapOf(

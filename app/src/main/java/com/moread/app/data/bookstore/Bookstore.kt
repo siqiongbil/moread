@@ -282,6 +282,27 @@ class Bookstore(
         runCatching { parseAndIndex(bookId) }
     }
 
+    /** 导入本地 TXT 文件（书城下载用）：文件已存在，建记录 + 解析。 */
+    suspend fun importLocalTxt(path: String, title: String, author: String): Result<Long> =
+        withContext(Dispatchers.IO) {
+            runCatching {
+                val f = java.io.File(path)
+                check(f.exists()) { "文件不存在" }
+                val bookId = db.bookDao().insert(
+                    BookEntity(
+                        title = title,
+                        author = author,
+                        format = "TXT",
+                        filePath = f.absolutePath,
+                        fileSize = f.length(),
+                        coverSeed = title.hashCode(),
+                    )
+                )
+                parseAndIndex(bookId)
+                bookId
+            }
+        }
+
     /** 带解析进度（0..100）的重新解析入口。 */
     suspend fun reparseWithProgress(
         bookId: Long,

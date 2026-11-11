@@ -40,6 +40,7 @@ import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Menu
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Settings
+import androidx.compose.material.icons.filled.Storefront
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Card
 import androidx.compose.material3.Button
@@ -204,7 +205,7 @@ fun BookshelfScreen(
                 title = {
                     Text(
                         if (selectMode && shelfTab == 0) "已选 ${selectedIds.size} 本"
-                        else if (shelfTab == 0) "墨阅 · 书架" else if (shelfTab == 1) "墨阅 · 线上" else "墨阅 · 设置",
+                        else if (shelfTab == 0) "墨阅 · 书架" else if (shelfTab == 1) "墨阅 · 线上" else if (shelfTab == 3) "墨阅 · 书城" else "墨阅 · 设置",
                     )
                 },
                 navigationIcon = {
@@ -280,6 +281,12 @@ fun BookshelfScreen(
                     onClick = { shelfTab = 1 },
                     icon = { Icon(Icons.Filled.Refresh, contentDescription = null) },
                     label = { Text("线上") },
+                )
+                NavigationBarItem(
+                    selected = shelfTab == 3,
+                    onClick = { shelfTab = 3 },
+                    icon = { Icon(Icons.Filled.Storefront, contentDescription = null) },
+                    label = { Text("书城") },
                 )
                 NavigationBarItem(
                     selected = shelfTab == 2,
@@ -367,6 +374,10 @@ fun BookshelfScreen(
                             )
                         }
                     },
+                )
+            } else if (shelfTab == 3) {
+                com.moread.app.ui.bookstore.BookStoreScreen(
+                    onOpenBook = { bookId -> onOpenBook(bookId) },
                 )
             } else {
                 // 设置页：GitHub 入口 + 分章规则
