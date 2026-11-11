@@ -36,7 +36,7 @@ class GitHubSettings(private val context: Context) {
 
     val flow: Flow<Snapshot> = context.githubDataStore.data.map { p ->
         Snapshot(
-            pat = p[KEY_PAT] ?: "",
+            pat = SecretCrypto.decrypt(p[KEY_PAT] ?: ""),
             apiBase = p[KEY_API] ?: "",
             rawBase = p[KEY_RAW] ?: "",
             defaultRepo = p[KEY_DEFAULT_REPO] ?: DEFAULT_REPO,
@@ -54,7 +54,7 @@ class GitHubSettings(private val context: Context) {
         readOnly: Boolean,
     ) {
         context.githubDataStore.edit {
-            it[KEY_PAT] = pat.trim()
+            it[KEY_PAT] = SecretCrypto.encrypt(pat.trim())
             it[KEY_API] = apiBase.trim().trimEnd('/')
             it[KEY_RAW] = rawBase.trim().trimEnd('/')
             it[KEY_DEFAULT_REPO] = defaultRepo.trim()

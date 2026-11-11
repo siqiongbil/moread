@@ -22,7 +22,7 @@ class LibrarySettings(private val context: Context) {
     val flow: Flow<Snapshot> = context.libraryDataStore.data.map { p ->
         Snapshot(
             baseUrl = p[KEY_URL] ?: DEFAULT_URL,
-            token = p[KEY_TOKEN] ?: "",
+            token = SecretCrypto.decrypt(p[KEY_TOKEN] ?: ""),
         )
     }
 
@@ -31,7 +31,7 @@ class LibrarySettings(private val context: Context) {
     }
 
     suspend fun setToken(token: String) = context.libraryDataStore.edit {
-        it[KEY_TOKEN] = token.trim()
+        it[KEY_TOKEN] = SecretCrypto.encrypt(token.trim())
     }
 
     companion object {
