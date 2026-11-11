@@ -135,10 +135,17 @@ class ReaderViewModel(
                 b = db.bookDao().getById(bookId) ?: error("书籍不存在")
             }
             book = b
-            source = if (b.format == "EPUB") {
-                EpubBookSource(b.filePath)
-            } else {
-                LocalTxtSource(b.filePath, b.charset)
+            source = when {
+                b.format == "EPUB" -> EpubBookSource(b.filePath)
+                b.format == "LIBRARY" -> {
+                    // 书城在线阅读：filePath = library://source/bookId
+                    val parts = b.filePath.removePrefix("library://").split('/')
+                    val settings = container.librarySettings.flow.first()
+                    com.moread.app.core.library.LibraryBookSource(
+                        settings.baseUrl, settings.token, parts[0], parts.getOrElse(1) { "" },
+                    )
+                }
+                else -> LocalTxtSource(b.filePath, b.charset)
             }
             chapters = db.chapterDao().chaptersFor(bookId)
             if (chapters.isEmpty()) {

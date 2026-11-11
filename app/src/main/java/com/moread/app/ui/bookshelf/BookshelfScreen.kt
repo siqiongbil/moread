@@ -378,6 +378,7 @@ fun BookshelfScreen(
             } else if (shelfTab == 3) {
                 com.moread.app.ui.bookstore.BookStoreScreen(
                     onOpenBook = { bookId -> onOpenBook(bookId) },
+                    onReadOnline = { bookId -> onOpenBook(bookId) },
                 )
             } else {
                 // 设置页：GitHub 入口 + 分章规则

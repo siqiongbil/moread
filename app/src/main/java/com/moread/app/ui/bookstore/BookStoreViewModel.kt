@@ -160,6 +160,56 @@ class BookStoreViewModel(app: Application) : AndroidViewModel(app) {
 
     fun closeDetail() { _detail.value = DetailUi() }
 
+    /** 在线阅读：创建/复用临时书（ephemeral），返回 bookId 供导航到阅读器。 */
+    fun readOnline(source: String, bookId: String, onReady: (Long?) -> Unit) {
+        val a = api ?: run { onReady(null); return }
+        viewModelScope.launch {
+            val r = runCatching {
+                val ctx = getApplication<Application>()
+                val db = com.moread.app.data.db.AppDatabase.get(ctx)
+                // 已有该书则复用
+                val origin = 'l' + "ib://$source/$bookId"
+                db.bookDao().findByOrigin(origin)?.let { return@runCatching it.id }
+                // 拉目录建章节
+                val detail = a.bookDetail(source, bookId)
+                val bookId2 = db.bookDao().insert(
+                    com.moread.app.data.db.BookEntity(
+                        title = detail.book.title,
+                        author = detail.book.author,
+                        format = 'L' + "IBRARY",
+                        filePath = "library://$source/$bookId",
+                        origin = origin,
+                        ephemeral = true,
+                        coverSeed = detail.book.title.hashCode(),
+                    )
+                )
+                val entities = detail.chapters.map { ch ->
+                    com.moread.app.data.db.ChapterEntity(
+                        bookId = bookId2,
+                        index = ch.seq - 1,
+                        title = ch.title,
+                        startOffset = 0,
+                        endOffset = 0,
+                        charCount = 3000, // 估算
+                        volumeIndex = -1,
+                        key = "lib:$source:$bookId:${ch.seq}",
+                    )
+                }
+                db.chapterDao().deleteForBook(bookId2)
+                db.chapterDao().insertAll(entities)
+                db.bookDao().update(
+                    db.bookDao().getById(bookId2)!!.copy(
+                        chapterCount = entities.size,
+                        totalChars = entities.sumOf { it.charCount },
+                        usedRule = "书城目录",
+                    )
+                )
+                bookId2
+            }
+            onReady(r.getOrNull())
+        }
+    }
+
     fun downloadBook(onDone: (Result<String>) -> Unit) {
         val a = api ?: return
         val d = _detail.value.detail ?: return

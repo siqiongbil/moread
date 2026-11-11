@@ -34,7 +34,7 @@ import java.net.URL
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun BookStoreScreen(onOpenBook: (Long) -> Unit) {
+fun BookStoreScreen(onOpenBook: (Long) -> Unit, onReadOnline: (Long) -> Unit) {
     val vm: BookStoreViewModel = viewModel()
     val ui by vm.ui.collectAsState()
     val detail by vm.detail.collectAsState()
@@ -102,7 +102,7 @@ fun BookStoreScreen(onOpenBook: (Long) -> Unit) {
     }
 
     if (detail.detail != null || detail.error != null) {
-        DetailSheet(vm, detail, onOpenBook) { vm.closeDetail() }
+        DetailSheet(vm, detail, onOpenBook, onReadOnline) { vm.closeDetail() }
     }
     if (showSettings) {
         LibrarySettingsDialog(vm) { showSettings = false }

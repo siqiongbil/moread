@@ -1,6 +1,7 @@
 package com.moread.app.ui.bookstore
 
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.rememberScrollState
@@ -78,8 +79,16 @@ fun DetailSheet(
     vm: BookStoreViewModel,
     detail: BookStoreViewModel.DetailUi,
     onOpenBook: (Long) -> Unit,
+    onReadOnline: (Long) -> Unit,
     onDismiss: () -> Unit,
 ) {
+    var reading by remember { mutableStateOf(false) }
+    LaunchedEffect(reading) {
+        if (reading) {
+            kotlinx.coroutines.delay(800)
+            onDismiss()
+        }
+    }
     val d = detail.detail ?: return
     var downloadMsg by remember { mutableStateOf<String?>(null) }
 
@@ -141,14 +150,23 @@ fun DetailSheet(
         },
         confirmButton = {
             if (!detail.downloading) {
-                TextButton(onClick = {
-                    vm.downloadBook { result ->
-                        downloadMsg = result.fold(
-                            onSuccess = { "已下载到本地书架" },
-                            onFailure = { "下载失败" },
-                        )
-                    }
-                }) { Text("整本下载") }
+                Row {
+                    TextButton(onClick = {
+                        val b = d.book
+                        reading = true
+                        vm.readOnline(b.source, b.bookId) { bookId ->
+                            bookId?.let(onReadOnline)
+                        }
+                    }) { Text("在线阅读") }
+                    TextButton(onClick = {
+                        vm.downloadBook { result ->
+                            downloadMsg = result.fold(
+                                onSuccess = { "已下载到本地书架" },
+                                onFailure = { "下载失败" },
+                            )
+                        }
+                    }) { Text("整本下载") }
+                }
             }
         },
         dismissButton = { TextButton(onClick = onDismiss) { Text("关闭") } },
