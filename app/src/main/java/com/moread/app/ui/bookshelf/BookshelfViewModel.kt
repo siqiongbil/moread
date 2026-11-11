@@ -443,7 +443,6 @@ class BookshelfViewModel(app: Application) : AndroidViewModel(app) {
         viewModelScope.launch {
             _githubBusy.value = true
             val r = runCatching { block() }
-            r.onFailure { android.util.Log.e("MoRead", "GitHub 操作失败", it) }
             _githubBusy.value = false
             onDone(r)
         }

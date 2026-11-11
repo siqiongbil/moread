@@ -8,3 +8,13 @@
 
 # junrar 反射构造（Archive 内部）
 -keep class com.github.junrar.** { *; }
+
+# Release 包剥离所有 android.util.Log 调用（防日志泄露令牌/错误栈）
+-assumenosideeffects class android.util.Log {
+    public static int v(...);
+    public static int d(...);
+    public static int i(...);
+    public static int w(...);
+    public static int e(...);
+    public static int wtf(...);
+}
