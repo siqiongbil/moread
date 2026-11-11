@@ -13,6 +13,7 @@ import com.moread.app.data.prefs.LibrarySettings
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 
@@ -29,10 +30,21 @@ class BookStoreViewModel(app: Application) : AndroidViewModel(app) {
         val categories: List<Pair<String, Int>> = emptyList(),
         val currentTab: String = "热榜",
         val books: List<LibBook> = emptyList(),
+        /** 精品书籍 = GitHub 书库（本地已缓存/已入库的书） */
+        val featured: List<FeaturedBook> = emptyList(),
         val total: Int = 0,
         val page: Int = 1,
         val hasMore: Boolean = false,
         val query: String = "",
+    )
+
+    data class FeaturedBook(
+        val bookId: Long,
+        val title: String,
+        val author: String,
+        val format: String,
+        val chapterCount: Int,
+        val fromGithub: Boolean,
     )
 
     data class DetailUi(
@@ -64,6 +76,23 @@ class BookStoreViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     fun refresh() {
+        // 精品书籍：本地书库的书（含 GitHub 导入/缓存/书城下载），不依赖书城 API
+        viewModelScope.launch {
+            runCatching {
+                val db = com.moread.app.data.db.AppDatabase.get(getApplication())
+                val all = db.bookDao().getAll()
+                    .filter { book -> !book.ephemeral && book.status == com.moread.app.data.db.BookEntity.STATUS_READY }
+                    .map { book ->
+                        FeaturedBook(
+                            bookId = book.id, title = book.title, author = book.author,
+                            format = book.displayFormat ?: book.format,
+                            chapterCount = book.chapterCount,
+                            fromGithub = book.origin?.startsWith("github://") == true,
+                        )
+                    }
+                _ui.update { st -> st.copy(featured = all) }
+            }
+        }
         val a = api ?: run { _ui.update { it.copy(needToken = true) }; return }
         viewModelScope.launch {
             _ui.update { it.copy(loading = true, error = null) }
@@ -84,6 +113,11 @@ class BookStoreViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     fun switchTab(tab: String) {
+        if (tab == "精品书籍") {
+            _ui.update { it.copy(currentTab = tab, books = emptyList()) }
+            refresh() // 重新拉精品列表
+            return
+        }
         val a = api ?: return
         _ui.update { it.copy(currentTab = tab, page = 1, books = emptyList()) }
         viewModelScope.launch {

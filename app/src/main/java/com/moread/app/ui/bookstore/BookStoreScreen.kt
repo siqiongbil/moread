@@ -8,6 +8,9 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.grid.GridCells
+import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
+import androidx.compose.foundation.lazy.grid.items
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
@@ -20,6 +23,7 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
@@ -72,7 +76,7 @@ fun BookStoreScreen(onOpenBook: (Long) -> Unit, onReadOnline: (Long) -> Unit) {
 
         // 分类
         val tabs = buildList {
-            add("热榜"); add("最近更新")
+            add("精品书籍"); add("热榜"); add("最近更新")
             ui.categories.forEach { add(it.first) }
         }
         ScrollableTabRow(
@@ -89,6 +93,7 @@ fun BookStoreScreen(onOpenBook: (Long) -> Unit, onReadOnline: (Long) -> Unit) {
             ui.needToken -> TokenGuide({ showSettings = true })
             ui.loading && ui.books.isEmpty() -> Box(Modifier.fillMaxSize(), Alignment.Center) { CircularProgressIndicator() }
             ui.error != null && ui.books.isEmpty() -> ErrorView(ui.error!!, { vm.refresh() })
+            ui.currentTab == "精品书籍" -> FeaturedGrid(ui.featured, onOpenBook)
             else -> LazyColumn(state = listState, modifier = Modifier.fillMaxSize()) {
                 items(ui.books, key = { "${it.source}/${it.bookId}" }) { book ->
                     BookRow(book, vm) { vm.openDetail(book.source, book.bookId) }
@@ -190,6 +195,74 @@ fun CoverImage(url: String?, fallback: String, modifier: Modifier = Modifier) {
         } else {
             Text(fallback.take(1), style = MaterialTheme.typography.titleLarge,
                 color = MaterialTheme.colorScheme.onSurfaceVariant)
+        }
+    }
+}
+
+/** 精品书籍网格：本地书库（GitHub 导入/缓存/书城下载），三列封面 + 书名。 */
+@Composable
+private fun FeaturedGrid(
+    featured: List<com.moread.app.ui.bookstore.BookStoreViewModel.FeaturedBook>,
+    onOpenBook: (Long) -> Unit,
+) {
+    if (featured.isEmpty()) {
+        Column(
+            Modifier.fillMaxSize().padding(32.dp),
+            horizontalAlignment = Alignment.CenterHorizontally,
+        ) {
+            Text("精品书架还没有书", style = MaterialTheme.typography.titleMedium)
+            Text(
+                "从书城下载或 GitHub 导入的书籍会出现在这里",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.padding(top = 6.dp),
+            )
+        }
+        return
+    }
+    LazyVerticalGrid(
+        columns = GridCells.Fixed(3),
+        contentPadding = PaddingValues(horizontal = 14.dp, vertical = 10.dp),
+        horizontalArrangement = Arrangement.spacedBy(12.dp),
+        verticalArrangement = Arrangement.spacedBy(14.dp),
+        modifier = Modifier.fillMaxSize(),
+    ) {
+        items(featured, key = { it.bookId }) { fb ->
+            Column(
+                horizontalAlignment = Alignment.CenterHorizontally,
+                modifier = Modifier.clickable { onOpenBook(fb.bookId) },
+            ) {
+                Box(
+                    Modifier
+                        .fillMaxWidth()
+                        .aspectRatio(0.72f)
+                        .background(
+                            androidx.compose.ui.graphics.Brush.linearGradient(
+                                listOf(Color(0xFFD7C9B8), Color(0xFFA8987F))
+                            ),
+                            RoundedCornerShape(8.dp),
+                        ),
+                    contentAlignment = Alignment.Center,
+                ) {
+                    Text(
+                        com.moread.app.core.model.TitleCleaner.clean(fb.title).take(9),
+                        color = Color.White,
+                        style = MaterialTheme.typography.labelSmall,
+                        lineHeight = 14.sp,
+                        maxLines = 3,
+                        overflow = TextOverflow.Ellipsis,
+                        textAlign = androidx.compose.ui.text.style.TextAlign.Center,
+                        modifier = Modifier.padding(horizontal = 4.dp),
+                    )
+                }
+                Text(
+                    com.moread.app.core.model.TitleCleaner.clean(fb.title),
+                    style = MaterialTheme.typography.labelSmall,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier.padding(top = 4.dp),
+                )
+            }
         }
     }
 }
