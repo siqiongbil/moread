@@ -21,6 +21,11 @@ class BookStoreViewModel(app: Application) : AndroidViewModel(app) {
     private val container: AppContainer = (app as MoreadApp).container
     val settings get() = container.librarySettings
     val settingsSnapshot get() = container.librarySettings
+    val readerPrefsFlow get() = container.prefs.flow
+
+    fun setAdultContent(on: Boolean) = viewModelScope.launch {
+        container.prefs.setAdultContent(on)
+    }
 
     data class StoreUi(
         val loading: Boolean = false,
@@ -30,21 +35,13 @@ class BookStoreViewModel(app: Application) : AndroidViewModel(app) {
         val categories: List<Pair<String, Int>> = emptyList(),
         val currentTab: String = "热榜",
         val books: List<LibBook> = emptyList(),
-        /** 精品书籍 = GitHub 书库（本地已缓存/已入库的书） */
-        val featured: List<FeaturedBook> = emptyList(),
+        /** 少儿不宜分类里的 GitHub 书库部分 */
+        val githubBooks: List<LibBook> = emptyList(),
         val total: Int = 0,
         val page: Int = 1,
         val hasMore: Boolean = false,
         val query: String = "",
-    )
-
-    data class FeaturedBook(
-        val bookId: Long,
-        val title: String,
-        val author: String,
-        val format: String,
-        val chapterCount: Int,
-        val fromGithub: Boolean,
+        val adult: Boolean = false,
     )
 
     data class DetailUi(
@@ -63,8 +60,16 @@ class BookStoreViewModel(app: Application) : AndroidViewModel(app) {
 
     private var api: LibraryApi? = null
     private var snapshot: LibrarySettings.Snapshot = LibrarySettings.Snapshot()
+    /** 成人内容开关（从 ReaderPrefs 收集） */
+    private var adultOn: Boolean = false
 
     init {
+        viewModelScope.launch {
+            container.prefs.flow.collect { p ->
+                adultOn = p.adultContent
+                _ui.update { it.copy(adult = p.adultContent) }
+            }
+        }
         viewModelScope.launch {
             container.librarySettings.flow.collect { s ->
                 snapshot = s
@@ -76,33 +81,48 @@ class BookStoreViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     fun refresh() {
-        // 精品书籍：本地书库的书（含 GitHub 导入/缓存/书城下载），不依赖书城 API
+        // GitHub 书库（books-start/books）拉取 → 转 LibBook 放入「少儿不宜」分类
         viewModelScope.launch {
             runCatching {
-                val db = com.moread.app.data.db.AppDatabase.get(getApplication())
-                val all = db.bookDao().getAll()
-                    .filter { book -> !book.ephemeral && book.status == com.moread.app.data.db.BookEntity.STATUS_READY }
-                    .map { book ->
-                        FeaturedBook(
-                            bookId = book.id, title = book.title, author = book.author,
-                            format = book.displayFormat ?: book.format,
-                            chapterCount = book.chapterCount,
-                            fromGithub = book.origin?.startsWith("github://") == true,
-                        )
-                    }
-                _ui.update { st -> st.copy(featured = all) }
+                // 用 AppContainer 的统一 API 构建（PAT 来自 gitSnapshot.effectivePat，
+                // init 收集 flow 即时更新 + defaultPat() Debug 兜底）
+                val ghApi = container.buildGithubApi()
+                val ghRef = com.moread.app.core.git.RepoUrlParser.parse("https://github.com/books-start/books")!!
+                val branch = ghApi.resolveBranch(ghRef)
+                val files = ghApi.listBookFiles(ghRef, branch)
+                android.util.Log.d("MoReadLib", "GitHub 书库文件数: " + files.size)
+                android.util.Log.d("MoReadLib", "GitHub 书库文件数: " + files.size)
+                val githubBooks = files.map { f ->
+                    val name = f.path.substringAfterLast('/')
+                    LibBook(
+                        source = "github",
+                        bookId = f.path,
+                        title = com.moread.app.core.model.TitleCleaner.clean(name.substringBeforeLast('.')),
+                        author = "GitHub 书库",
+                        category = "少儿不宜",
+                        status = "完结",
+                        wordsText = formatSize(f.size),
+                        chapters = 0,
+                        completed = true,
+                        updated = "",
+                        cover = "",
+                    )
+                }
+                _ui.update { it.copy(githubBooks = githubBooks) }
+            }.onFailure { e ->
+                android.util.Log.w("MoReadLib", "GitHub 书库加载失败: " + e.message)
             }
         }
         val a = api ?: run { _ui.update { it.copy(needToken = true) }; return }
         viewModelScope.launch {
             _ui.update { it.copy(loading = true, error = null) }
             launch {
-                runCatching { a.hotWords() }.onSuccess { ws ->
+                runCatching { a.hotWords(adult = if (_ui.value.adult) 1 else 0) }.onSuccess { ws ->
                     _ui.update { it.copy(hotWords = ws.take(10)) }
                 }
             }
             launch {
-                runCatching { a.categories() }.onSuccess { cs ->
+                runCatching { a.categories(adult = if (_ui.value.adult) 1 else 0) }.onSuccess { cs ->
                     _ui.update { it.copy(categories = cs) }
                 }
             }
@@ -113,17 +133,21 @@ class BookStoreViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     fun switchTab(tab: String) {
-        if (tab == "精品书籍") {
-            _ui.update { it.copy(currentTab = tab, books = emptyList()) }
-            refresh() // 重新拉精品列表
-            return
-        }
         val a = api ?: return
         _ui.update { it.copy(currentTab = tab, page = 1, books = emptyList()) }
         viewModelScope.launch {
             _ui.update { it.copy(loading = true, error = null) }
-            runCatching { loadTab(a, tab, _ui.value.query, 1) }
-                .onFailure { e -> _ui.update { it.copy(error = e.message ?: "加载失败") } }
+            runCatching {
+                if (tab == "少儿不宜") {
+                    // API 成人书 + GitHub 书库合并
+                    val r = loadTabResult(a, tab, 1)
+                    val gh = _ui.value.githubBooks
+                    // GitHub 书库排前面（用户自己的书更醒目），API 成人书排后
+                    _ui.update { it.copy(books = gh + (r?.items ?: emptyList()), total = (r?.total ?: 0) + gh.size) }
+                } else {
+                    loadTab(a, tab, _ui.value.query, 1)
+                }
+            }.onFailure { e -> _ui.update { it.copy(error = e.message ?: "加载失败") } }
             _ui.update { it.copy(loading = false) }
         }
     }
@@ -134,8 +158,13 @@ class BookStoreViewModel(app: Application) : AndroidViewModel(app) {
         viewModelScope.launch {
             _ui.update { it.copy(loading = true, error = null) }
             runCatching {
-                val r = a.search(q = q)
-                _ui.update { it.copy(books = r.items, total = r.total, hasMore = r.items.size < r.total) }
+                val r = a.search(q = q, adult = if (_ui.value.adult) 1 else 0)
+                // 合并 GitHub 书库匹配项（标题模糊匹配）
+                val qLower = q.trim().lowercase()
+                val ghMatches = if (qLower.isBlank()) emptyList() else _ui.value.githubBooks.filter {
+                    it.title.lowercase().contains(qLower) || it.author.lowercase().contains(qLower)
+                }
+                _ui.update { it.copy(books = r.items + ghMatches, total = r.total + ghMatches.size, hasMore = r.items.size < r.total) }
             }.onFailure { e -> _ui.update { it.copy(error = e.message) } }
             _ui.update { it.copy(loading = false) }
         }
@@ -177,9 +206,9 @@ class BookStoreViewModel(app: Application) : AndroidViewModel(app) {
 
     private suspend fun loadTabResult(a: LibraryApi, tab: String, page: Int): LibSearchResult? =
         when (tab) {
-            "热榜" -> a.rank(page = page)
-            "最近更新" -> a.latest(page = page)
-            else -> a.search(category = tab, page = page)
+            "热榜" -> a.rank(page = page, adult = if (_ui.value.adult) 1 else 0)
+            "最近更新" -> a.latest(page = page, adult = if (_ui.value.adult) 1 else 0)
+            else -> a.search(category = tab, page = page, adult = if (_ui.value.adult) 1 else 0)
         }
 
     fun openDetail(source: String, bookId: String) {
@@ -197,13 +226,19 @@ class BookStoreViewModel(app: Application) : AndroidViewModel(app) {
     /** 在线阅读：创建/复用临时书（ephemeral），返回 bookId 供导航到阅读器。 */
     fun readOnline(source: String, bookId: String, onReady: (Long?) -> Unit) {
         val a = api ?: run { onReady(null); return }
-        viewModelScope.launch {
+        container.appScope.launch {
             val r = runCatching {
                 val ctx = getApplication<Application>()
                 val db = com.moread.app.data.db.AppDatabase.get(ctx)
-                // 已有该书则复用
-                val origin = 'l' + "ib://$source/$bookId"
-                db.bookDao().findByOrigin(origin)?.let { return@runCatching it.id }
+                // 已有且 READY 才复用；FAILED/历史坏数据删掉重建
+                val origin = "lib://$source/$bookId"
+                db.bookDao().findByOrigin(origin)?.let { existing ->
+                    if (existing.status == com.moread.app.data.db.BookEntity.STATUS_READY) {
+                        return@runCatching existing.id
+                    }
+                    db.chapterDao().deleteForBook(existing.id)
+                    db.bookDao().delete(existing.id)
+                }
                 // 拉目录建章节
                 val detail = a.bookDetail(source, bookId)
                 val bookId2 = db.bookDao().insert(
@@ -231,16 +266,46 @@ class BookStoreViewModel(app: Application) : AndroidViewModel(app) {
                 }
                 db.chapterDao().deleteForBook(bookId2)
                 db.chapterDao().insertAll(entities)
+                // 书城书按章在线拉取，不走本地 parseAndIndex——直接置 READY
                 db.bookDao().update(
                     db.bookDao().getById(bookId2)!!.copy(
                         chapterCount = entities.size,
                         totalChars = entities.sumOf { it.charCount },
                         usedRule = "书城目录",
+                        status = com.moread.app.data.db.BookEntity.STATUS_READY,
                     )
                 )
                 bookId2
             }
             onReady(r.getOrNull())
+        }
+    }
+
+    /** GitHub 书库（books-start/books）整本下载 → 导入本地书架 → 返回 bookId。 */
+    fun downloadGithubBook(path: String, onDone: (Result<Long>) -> Unit) {
+        // 应用级作用域：切后台/Activity 重建不中断下载
+        container.appScope.launch {
+            onDone(runCatching {
+                val ghPat0 = container.gitSettings.flow.first()
+                val ghPat = com.moread.app.data.prefs.SecretCrypto.decrypt(ghPat0.pat)
+                val ghApi = com.moread.app.core.git.GitHubApi(patProvider = { ghPat })
+                val ref = com.moread.app.core.git.RepoUrlParser.parse("https://github.com/books-start/books")!!
+                val branch = ghApi.resolveBranch(ref)
+                val bytes = ghApi.fetchRaw(ref, branch, path)
+                val isGz = bytes.size >= 2 && bytes[0] == 0x1f.toByte() && bytes[1] == 0x8b.toByte()
+                val text = if (isGz) {
+                    java.util.zip.GZIPInputStream(bytes.inputStream()).readBytes().toString(Charsets.UTF_8)
+                } else {
+                    String(bytes, Charsets.UTF_8)
+                }
+                val ctx = getApplication<Application>()
+                val dir = java.io.File(ctx.filesDir, "books").apply { mkdirs() }
+                val name = path.substringAfterLast('/')
+                val safeName = name.replace(Regex("[/:*?\"<>|]"), "_")
+                val f = java.io.File(dir, "gh_${safeName}")
+                f.writeText(text, Charsets.UTF_8)
+                container.bookstore.importLocalTxt(f.absolutePath, name.substringBeforeLast('.'), "GitHub 书库")
+            }.getOrElse { e -> throw e })
         }
     }
 
@@ -272,4 +337,10 @@ class BookStoreViewModel(app: Application) : AndroidViewModel(app) {
             onDone(result)
         }
     }
+}
+
+private fun formatSize(bytes: Long): String = when {
+    bytes >= 1 shl 20 -> "%.1fMB".format(bytes / 1048576.0)
+    bytes >= 1 shl 10 -> "%.0fKB".format(bytes / 1024.0)
+    else -> "${bytes}B"
 }
