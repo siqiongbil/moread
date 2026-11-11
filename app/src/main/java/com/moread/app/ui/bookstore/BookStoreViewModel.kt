@@ -250,10 +250,16 @@ class BookStoreViewModel(app: Application) : AndroidViewModel(app) {
         viewModelScope.launch {
             _detail.update { it.copy(downloading = true, downloadPct = 0) }
             val result = runCatching {
-                val gzBytes = a.download(d.book.source, d.book.bookId) { read, total ->
+                val data = a.download(d.book.source, d.book.bookId) { read, total ->
                     _detail.update { it.copy(downloadPct = (read * 100 / total).toInt()) }
                 }
-                val text = java.util.zip.GZIPInputStream(gzBytes.inputStream()).readBytes().toString(Charsets.UTF_8)
+                // 服务端无 gz 存量时回纯文本兜底——按 gzip magic 判断是否需要解压
+                val isGz = data.size >= 2 && data[0] == 0x1f.toByte() && data[1] == 0x8b.toByte()
+                val text = if (isGz) {
+                    java.util.zip.GZIPInputStream(data.inputStream()).readBytes().toString(Charsets.UTF_8)
+                } else {
+                    String(data, Charsets.UTF_8)
+                }
                 val ctx = getApplication<Application>()
                 val dir = java.io.File(ctx.filesDir, "books").apply { mkdirs() }
                 val safeName = d.book.title.replace(Regex("[\\/:*?\\\"<>|]"), "_")

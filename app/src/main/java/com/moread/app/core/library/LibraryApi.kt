@@ -217,7 +217,10 @@ class LibraryApi(private val baseUrl: String, private val token: String) {
             }
         }
 
-    /** 整本下载（gz 字节）。 */
+    /**
+     * 整本下载。无 gz 存量时服务端直接回纯文本兜底——返回前检测 gzip magic，
+     * 调用方（downloadBook）据此决定是否解压。
+     */
     suspend fun download(source: String, bookId: String, onProgress: ((Long, Long) -> Unit)? = null): ByteArray =
         withContext(Dispatchers.IO) {
             client.newCall(

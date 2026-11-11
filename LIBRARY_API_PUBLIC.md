@@ -1,6 +1,6 @@
 # 在线书库接口文档(公网版)
 
-> 版本:2026-11-11 v6(token 全接口鉴权;云端同步已移除;`/reader` 已下线;批量章节/热搜词收录)
+> 版本:2026-11-11 v7(token 全接口鉴权;云端同步已移除;`/reader` 已下线;批量/热搜收录;成人内容角标与专区说明)
 
 Base URL: `https://195.216.150.235:7443`
 
@@ -40,7 +40,7 @@ GET /api/lib/search
 | category | string | "" | **标准化分类**精确匹配(见 1.4;各源原分类自动归一到 8 大类) |
 | status | string | "" | `完结` / `连载` |
 | source | string | "" | 限定采集源(washai/biquge345/…) |
-| adult | 0/1 | 0 | 1=包含成人内容(默认隐藏) |
+| adult | 0/1 | 0 | 1=包含成人内容(默认隐藏)。**1 时分类列表会多出「少儿不宜」专区**(置于首位),`category=少儿不宜` 只筛成人书;默认模式下该分类不可达(返回空) |
 | sort | string | relevance | `relevance`(匹配度:书名前缀>书名包含>作者>拼音首字母) / `updated` / `chapters` / `words` / `hot`(站源排行榜名次,见 1.5) |
 | page | int | 1 | |
 | size | int | 20 | 最大 100 |
@@ -74,6 +74,8 @@ GET /api/lib/search
 ```
 
 > `popularity`:站源排行榜名次(1=榜首,越小越热,无=0)。`cover` 为相对路径,拼在 Base URL 后请求。
+>
+> items 内每本均含 `adult`(true/false)字段——即使 adult=0 模式下也返回该字段(全为 false),App 可据此做角标。
 
 ### 1.2 最近更新
 
