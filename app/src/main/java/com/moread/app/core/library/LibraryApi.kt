@@ -132,20 +132,20 @@ class LibraryApi(private val baseUrl: String, private val token: String) {
         )
     }
 
-    suspend fun latest(page: Int = 1, size: Int = 20): LibSearchResult {
-        val json = getJson("latest?page=$page&size=$size")
+    suspend fun latest(page: Int = 1, size: Int = 20, adult: Int = 0): LibSearchResult {
+        val json = getJson("latest?page=$page&size=$size&adult=$adult")
         val arr = json.optJSONArray("items") ?: JSONArray()
         return LibSearchResult(json.optInt("total"), page, (0 until arr.length()).map { parseBook(arr.optJSONObject(it)) })
     }
 
-    suspend fun rank(page: Int = 1, size: Int = 20): LibSearchResult {
-        val json = getJson("rank?page=$page&size=$size")
+    suspend fun rank(page: Int = 1, size: Int = 20, adult: Int = 0): LibSearchResult {
+        val json = getJson("rank?page=$page&size=$size&adult=$adult")
         val arr = json.optJSONArray("items") ?: JSONArray()
         return LibSearchResult(json.optInt("total"), page, (0 until arr.length()).map { parseBook(arr.optJSONObject(it)) })
     }
 
-    suspend fun categories(): List<Pair<String, Int>> {
-        val json = getJson("categories")
+    suspend fun categories(adult: Int = 0): List<Pair<String, Int>> {
+        val json = getJson("categories?adult=$adult")
         val arr = json.optJSONArray("items") ?: JSONArray()
         return (0 until arr.length()).mapNotNull {
             val o = arr.optJSONObject(it) ?: return@mapNotNull null
@@ -153,8 +153,8 @@ class LibraryApi(private val baseUrl: String, private val token: String) {
         }
     }
 
-    suspend fun hotWords(): List<String> {
-        val json = getJson("hotwords")
+    suspend fun hotWords(adult: Int = 0): List<String> {
+        val json = getJson("hotwords?adult=$adult")
         val arr = json.optJSONArray("items") ?: JSONArray()
         return (0 until arr.length()).map { arr.optString(it) }
     }
@@ -223,7 +223,11 @@ class LibraryApi(private val baseUrl: String, private val token: String) {
      */
     suspend fun download(source: String, bookId: String, onProgress: ((Long, Long) -> Unit)? = null): ByteArray =
         withContext(Dispatchers.IO) {
-            client.newCall(
+            // 整本下载专用：长超时（家庭宽带上行慢）
+            val dlClient = pinnedClient!!.newBuilder()
+                .readTimeout(300, TimeUnit.SECONDS)
+                .build()
+            dlClient.newCall(
                 req("download/${enc(source)}/${enc(bookId)}?fmt=gz").get().build()
             ).execute().use { resp ->
                 if (!resp.isSuccessful) throw RuntimeException("下载失败 HTTP ${resp.code}")
@@ -312,7 +316,7 @@ class LibraryApi(private val baseUrl: String, private val token: String) {
                     tmf.trustManagers[0] as X509TrustManager,
                 )
                 .connectTimeout(10, TimeUnit.SECONDS)
-                .readTimeout(300, TimeUnit.SECONDS)
+                .readTimeout(30, TimeUnit.SECONDS) // API/章节：快速失败；整本下载用 download 专用
                 .build()
         }
     }

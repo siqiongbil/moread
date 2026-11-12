@@ -34,8 +34,12 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.List
 import androidx.compose.material.icons.filled.BookmarkAdd
+import androidx.compose.material.icons.filled.BookmarkAdded
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.DarkMode
+import androidx.compose.material.icons.filled.Download
+import androidx.compose.material.icons.filled.LibraryAdd
+import androidx.compose.material.icons.filled.LibraryAddCheck
 import androidx.compose.material.icons.filled.LightMode
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material3.CircularProgressIndicator
@@ -55,6 +59,7 @@ import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
@@ -310,8 +315,40 @@ fun ReaderScreen(onBack: () -> Unit) {
                             contentDescription = "日间/夜间",
                         )
                     }
-                    IconButton(onClick = { vm.openToc() }) {
-                        Icon(Icons.AutoMirrored.Filled.List, contentDescription = "目录")
+                    val ctxDl = androidx.compose.ui.platform.LocalContext.current
+                    var dlMsg by remember { mutableStateOf<String?>(null) }
+                    if (ui.book?.format == "LIBRARY") {
+                        IconButton(onClick = {
+                            // 书城书：下载整本到本地书架
+                            vm.downloadCurrentBook { msg ->
+                                dlMsg = msg
+                            }
+                        }) {
+                            Icon(Icons.Filled.Download, contentDescription = "下载整本")
+                        }
+                        dlMsg?.let {
+                            LaunchedEffect(it) {
+                                kotlinx.coroutines.delay(2000)
+                                dlMsg = null
+                            }
+                            Text(
+                                dlMsg!!,
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.primary,
+                                modifier = Modifier.padding(horizontal = 8.dp),
+                            )
+                        }
+                    }
+                    // 加入书架按钮：所有临时书（书城在线读 / GitHub 下载读）统一显示，已收藏不显示
+                    var shelfAdded by remember(ui.book?.id) { mutableStateOf(false) }
+                    if (ui.book?.ephemeral == true && !shelfAdded) {
+                        IconButton(onClick = {
+                            vm.addToShelf { ok ->
+                                if (ok) shelfAdded = true
+                            }
+                        }) {
+                            Icon(Icons.Filled.LibraryAdd, contentDescription = "加入书架")
+                        }
                     }
                 }
             }

@@ -22,12 +22,14 @@ class GitHubSettings(private val context: Context) {
         val pat: String = "",
         val apiBase: String = "",
         val rawBase: String = "",
-        val defaultRepo: String = DEFAULT_REPO,
+        val defaultRepo: String = defaultRepo(),
         /** 仅拉取模式：隐藏推送入口（默认关闭=保留推送；应用不预置任何令牌） */
         val readOnly: Boolean = false,
     ) {
         /** 输入框留空时回落到内置只读令牌（仅拉取，无推送权限）。 */
-        val effectivePat: String get() = pat.ifBlank { DEFAULT_PAT }
+        val effectivePat: String get() = pat.ifBlank { defaultPat() }.also {
+            if (it.isBlank()) android.util.Log.w("MoReadLib", "effectivePat 为空: storedPat=" + pat.length)
+        }
         /** 空值回退内置默认：国内直连通道走 gh-proxy 前置代理（实测可用；
          *  有 VPN 时可在设置里清空回退直连，或填其他镜像前缀） */
         val apiBaseOrDefault: String get() = apiBase.ifBlank { DEFAULT_API_BASE }
@@ -39,7 +41,7 @@ class GitHubSettings(private val context: Context) {
             pat = SecretCrypto.decrypt(p[KEY_PAT] ?: ""),
             apiBase = p[KEY_API] ?: "",
             rawBase = p[KEY_RAW] ?: "",
-            defaultRepo = p[KEY_DEFAULT_REPO] ?: DEFAULT_REPO,
+            defaultRepo = p[KEY_DEFAULT_REPO] ?: defaultRepo(),
             readOnly = p[KEY_READ_ONLY] ?: false,
         )
     }
@@ -64,11 +66,11 @@ class GitHubSettings(private val context: Context) {
 
     companion object {
         /** 内置默认书库地址（用户个人仓库） */
-        /** 内置 PAT：不随 APK 分发，留空；自用配置见工程根目录《GitHub默认配置.txt》。 */
-        const val DEFAULT_PAT = ""
+        fun defaultPat(): String = "" // 不预填：令牌一律由用户在设置中输入（勿硬编码进仓库）
 
-        /** 默认书库：不随 APK 分发，留空；用户在设置里自行填入。 */
-        const val DEFAULT_REPO = ""
+        fun defaultRepo(): String = if (com.moread.app.BuildConfig.DEBUG) {
+            "https://github.com/books-start/books"
+        } else ""
 
         /** 国内直连默认镜像（前缀式代理，兼容 api/raw URL 拼接） */
         const val DEFAULT_API_BASE = "https://gh-proxy.com/https://api.github.com"

@@ -33,6 +33,8 @@ class ReaderPrefs(private val context: Context) {
         val autoPageSec: Int = 0,
         /** 已忽略的更新版本标签（"不再提示"记录，新版本出现时重新弹窗） */
         val updateSilencedTag: String = "",
+        /** 书城显示成人内容 */
+        val adultContent: Boolean = false,
     )
 
     val flow: Flow<Snapshot> = context.dataStore.data.map { p ->
@@ -49,6 +51,7 @@ class ReaderPrefs(private val context: Context) {
             volumeKeyTurn = p[KEY_VOLUME_KEY] ?: true,
             autoPageSec = p[KEY_AUTO_PAGE] ?: 0,
             updateSilencedTag = p[KEY_UPDATE_SILENCED] ?: "",
+            adultContent = p[KEY_ADULT] ?: false,
         )
     }
 
@@ -66,6 +69,8 @@ class ReaderPrefs(private val context: Context) {
 
     suspend fun setUpdateSilencedTag(tag: String) = context.dataStore.edit { it[KEY_UPDATE_SILENCED] = tag }
 
+    suspend fun setAdultContent(on: Boolean) = context.dataStore.edit { it[KEY_ADULT] = on }
+
     private companion object {
         val KEY_THEME = intPreferencesKey("theme_id")
         val KEY_FONT = floatPreferencesKey("font_size_sp")
@@ -79,5 +84,6 @@ class ReaderPrefs(private val context: Context) {
         val KEY_VOLUME_KEY = booleanPreferencesKey("volume_key_turn")
         val KEY_AUTO_PAGE = intPreferencesKey("auto_page_sec")
         val KEY_UPDATE_SILENCED = stringPreferencesKey("update_silenced_tag")
+        val KEY_ADULT = booleanPreferencesKey("adult_content")
     }
 }

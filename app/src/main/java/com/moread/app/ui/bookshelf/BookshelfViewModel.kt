@@ -546,6 +546,18 @@ class BookshelfViewModel(app: Application) : AndroidViewModel(app) {
         }
     }
 
+    /** 书城 VM（供书城设置弹窗复用；同一 appScope，状态共享）。 */
+    private var _bookStoreVm: com.moread.app.ui.bookstore.BookStoreViewModel? = null
+    fun bookStoreVm(): com.moread.app.ui.bookstore.BookStoreViewModel {
+        val existing = _bookStoreVm
+        if (existing != null) return existing
+        val created = com.moread.app.ui.bookstore.BookStoreViewModel(getApplication())
+        _bookStoreVm = created
+        return created
+    }
+
+    fun setAdultContent(on: Boolean) = viewModelScope.launch { container.prefs.setAdultContent(on) }
+
     /** 批量推送选中书籍到默认仓库的 share 分支（分支自动创建），路径按扩展名归位。 */
     fun pushBooksSelected(books: List<BookEntity>, onDone: (Result<Int>) -> Unit) {
         githubAction({

@@ -21,7 +21,12 @@ import kotlinx.coroutines.launch
  */
 class AppContainer(context: Context) {
 
-    val appScope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+    val appScope = CoroutineScope(SupervisorJob() + Dispatchers.Default.limitedParallelism(8) +
+        kotlinx.coroutines.CoroutineExceptionHandler { _, t ->
+            android.util.Log.e("MoReadCrash", "uncaught", t)
+        })
+
+
 
     val database: AppDatabase = AppDatabase.get(context)
     val prefs: ReaderPrefs = ReaderPrefs(context)

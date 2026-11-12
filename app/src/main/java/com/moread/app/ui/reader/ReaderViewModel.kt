@@ -472,6 +472,56 @@ class ReaderViewModel(
         )
     }
 
+    /** 书城书整本下载：拉 gz → 解压 → 存 TXT → 转本地书架书（阅读进度保留）。 */
+    fun downloadCurrentBook(onDone: (String) -> Unit) {
+        val b = book ?: return
+        if (b.format != "LIBRARY") { onDone("仅书城书籍支持下载"); return }
+        val parts = b.filePath.removePrefix("library://").split('/')
+        if (parts.size < 2) { onDone("书源信息不完整"); return }
+        val src = parts[0]
+        val bookId = parts[1]
+        viewModelScope.launch {
+            onDone(runCatching {
+                val settings = container.librarySettings.flow.first()
+                val api = com.moread.app.core.library.LibraryApi(settings.baseUrl, settings.token)
+                val data = api.download(src, bookId)
+                val isGz = data.size >= 2 && data[0] == 0x1f.toByte() && data[1] == 0x8b.toByte()
+                val text = if (isGz) {
+                    java.util.zip.GZIPInputStream(data.inputStream()).readBytes().toString(Charsets.UTF_8)
+                } else {
+                    String(data, Charsets.UTF_8)
+                }
+                val ctx = app
+                val dir = java.io.File(ctx.filesDir, "books").apply { mkdirs() }
+                val safeName = b.title.replace(Regex("[\\/:*?\"<>|]"), "_")
+                val f = java.io.File(dir, "lib_${safeName}.txt")
+                f.writeText(text, Charsets.UTF_8)
+                // 转本地书：format=TXT，filePath=txt 文件，origin 保留
+                db.bookDao().update(b.copy(format = "TXT", filePath = f.absolutePath, fileSize = f.length()))
+                // 重建章节：LIBRARY 占位章节（offset=0）不能用于本地 TXT 读取，必须按真实文件重新分章
+                container.bookstore.reparse(b.id).getOrThrow()
+                "已下载到本地书架"
+            }.getOrElse { "下载失败：${it.message}" })
+        }
+    }
+
+    /** 把书城临时书转正收藏到书架（ephemeral=false）。已收藏则返回 false。 */
+    val isEphemeralBook: Boolean
+        get() = book?.ephemeral == true
+
+    private var shelfAdded = false
+
+    fun addToShelf(onDone: (Boolean) -> Unit) {
+        val b = book ?: return onDone(false)
+        if (!b.ephemeral || shelfAdded) return onDone(false)
+        shelfAdded = true
+        viewModelScope.launch {
+            runCatching {
+                db.bookDao().update(b.copy(ephemeral = false))
+            }.onSuccess { onDone(true) }.onFailure { onDone(false) }
+        }
+    }
+
     override fun onCleared() {
         if (bookId > 0 && chapters.isNotEmpty()) {
             val p = progressEntity()

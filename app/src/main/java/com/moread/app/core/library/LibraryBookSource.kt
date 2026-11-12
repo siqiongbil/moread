@@ -20,8 +20,16 @@ class LibraryBookSource(
     private val api = LibraryApi(baseUrl, token)
 
     override suspend fun openChapterText(bound: ChapterBound, charset: String): String {
-        val key = bound.key ?: return ""
-        val seq = key.substringAfterLast(':').toIntOrNull() ?: return ""
+        android.util.Log.d("MoReadLib", "openChapterText key=${bound.key} seq-parse starting src=$src bookId=$bookId")
+        val key = bound.key ?: run {
+            android.util.Log.d("MoReadLib", "key is null!")
+            return ""
+        }
+        val seq = key.substringAfterLast(':').toIntOrNull() ?: run {
+            android.util.Log.d("MoReadLib", "seq parse fail from key=$key")
+            return ""
+        }
+        android.util.Log.d("MoReadLib", "fetching seq=$seq")
         val (title, body) = api.chapter(src, bookId, seq) ?: return "（本章暂无内容，稍后重试）"
         // API 返回首行是 ======== 标题 ========，我们用 Compose 排版，重建为标准格式
         return "$title\n\n$body"

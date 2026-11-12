@@ -4,6 +4,8 @@ import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
@@ -36,7 +38,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import java.net.URL
 
-@OptIn(ExperimentalMaterial3Api::class)
+@OptIn(ExperimentalMaterial3Api::class, androidx.compose.foundation.ExperimentalFoundationApi::class)
 @Composable
 fun BookStoreScreen(onOpenBook: (Long) -> Unit, onReadOnline: (Long) -> Unit) {
     val vm: BookStoreViewModel = viewModel()
@@ -54,6 +56,7 @@ fun BookStoreScreen(onOpenBook: (Long) -> Unit, onReadOnline: (Long) -> Unit) {
     LaunchedEffect(shouldLoadMore) { if (shouldLoadMore) vm.loadMore() }
     var queryText by remember { mutableStateOf("") }
 
+    Box(Modifier.fillMaxSize()) {
     Column(Modifier.fillMaxSize()) {
         // 搜索栏
         Row(
@@ -63,20 +66,24 @@ fun BookStoreScreen(onOpenBook: (Long) -> Unit, onReadOnline: (Long) -> Unit) {
             OutlinedTextField(
                 value = queryText,
                 onValueChange = { queryText = it },
-                placeholder = { Text(ui.hotWords.firstOrNull() ?: "搜索书名/作者/拼音", style = MaterialTheme.typography.bodySmall) },
+                placeholder = { Text(ui.hotWords.firstOrNull() ?: "搜索书名/作者/拼音") },
                 leadingIcon = { Icon(Icons.Filled.Search, null, Modifier.size(18.dp)) },
                 singleLine = true, shape = RoundedCornerShape(22.dp),
-                modifier = Modifier.weight(1f).height(46.dp),
+                textStyle = MaterialTheme.typography.bodyMedium,
+                keyboardOptions = androidx.compose.foundation.text.KeyboardOptions(
+                    imeAction = androidx.compose.ui.text.input.ImeAction.Search,
+                ),
+                keyboardActions = androidx.compose.foundation.text.KeyboardActions(
+                    onSearch = { vm.search(queryText) },
+                ),
+                modifier = Modifier.weight(1f).height(52.dp),
             )
             TextButton(onClick = { vm.search(queryText) }, modifier = Modifier.padding(start = 4.dp)) { Text("搜索") }
-            IconButton(onClick = { showSettings = true }, modifier = Modifier.size(36.dp)) {
-                Icon(Icons.Filled.Settings, "书城设置", Modifier.size(18.dp))
-            }
         }
 
         // 分类
         val tabs = buildList {
-            add("精品书籍"); add("热榜"); add("最近更新")
+            add("热榜"); add("最近更新")
             ui.categories.forEach { add(it.first) }
         }
         ScrollableTabRow(
@@ -93,10 +100,57 @@ fun BookStoreScreen(onOpenBook: (Long) -> Unit, onReadOnline: (Long) -> Unit) {
             ui.needToken -> TokenGuide({ showSettings = true })
             ui.loading && ui.books.isEmpty() -> Box(Modifier.fillMaxSize(), Alignment.Center) { CircularProgressIndicator() }
             ui.error != null && ui.books.isEmpty() -> ErrorView(ui.error!!, { vm.refresh() })
-            ui.currentTab == "精品书籍" -> FeaturedGrid(ui.featured, onOpenBook)
+            !ui.loading && ui.error == null && ui.books.isEmpty() && (ui.query.isNotBlank() || ui.currentTab.isNotBlank()) -> Column(
+                Modifier.fillMaxSize().padding(32.dp),
+                horizontalAlignment = Alignment.CenterHorizontally,
+            ) {
+                Text("未找到相关书籍", style = MaterialTheme.typography.titleMedium)
+                Text(
+                    if (ui.query.isNotBlank()) "没有找到「${ui.query}」相关的书籍，试试其他关键词"
+                    else "该分类下暂无书籍",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.padding(top = 6.dp),
+                )
+            }
             else -> LazyColumn(state = listState, modifier = Modifier.fillMaxSize()) {
                 items(ui.books, key = { "${it.source}/${it.bookId}" }) { book ->
-                    BookRow(book, vm) { vm.openDetail(book.source, book.bookId) }
+                    val navCtx = LocalContext.current
+                    val thisPath = "${book.source}/${book.bookId}"
+                    val isOpening = ui.openingPath == thisPath
+                    BookRow(book, vm,
+                        opening = isOpening,
+                        openingPct = ui.openingPct,
+                        openingBytes = ui.openingBytes,
+                        onClick = {
+                            if (isOpening) return@BookRow
+                            // 回调可能在后台线程（appScope），导航必须回主线程
+                            val open: (Long) -> Unit = { id ->
+                                navCtx.mainExecutor.execute { onOpenBook(id) }
+                            }
+                            if (book.source == "github") {
+                                // GitHub 书库：下载整本 → 本地书架 → 打开
+                                vm.downloadGithubBook(book.bookId) { result ->
+                                    result.onSuccess { bookId ->
+                                        navCtx.mainExecutor.execute { onOpenBook(bookId) }
+                                    }.onFailure { e ->
+                                        navCtx.mainExecutor.execute {
+                                            android.widget.Toast.makeText(
+                                                navCtx, "打开失败：" + (e.message ?: "网络错误"), android.widget.Toast.LENGTH_LONG
+                                            ).show()
+                                        }
+                                    }
+                                }
+                            } else {
+                                vm.readOnline(book.source, book.bookId) { id: Long? ->
+                                    id?.let { o ->
+                                        navCtx.mainExecutor.execute { onReadOnline(o) }
+                                    }
+                                }
+                            }
+                        },
+                        onLongClick = { vm.openDetail(book.source, book.bookId) },
+                    )
                 }
                 if (ui.loading && ui.books.isNotEmpty()) {
                     item { LoadingFooter() }
@@ -105,6 +159,46 @@ fun BookStoreScreen(onOpenBook: (Long) -> Unit, onReadOnline: (Long) -> Unit) {
             }
         }
     }
+
+    // 全局下载悬浮条：切分类 tab 仍可见，不阻挡操作；下载完成自动跳转
+    if (ui.openingPath != null) {
+        val openingBook = (ui.books + ui.githubBooks).firstOrNull { "${it.source}/${it.bookId}" == ui.openingPath }
+        Surface(
+            shape = RoundedCornerShape(20.dp),
+            color = MaterialTheme.colorScheme.primaryContainer,
+            tonalElevation = 4.dp,
+            modifier = Modifier
+                .align(Alignment.BottomCenter)
+                .padding(bottom = 18.dp)
+                .fillMaxWidth(0.86f),
+        ) {
+            Row(
+                Modifier.padding(horizontal = 14.dp, vertical = 8.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                CircularProgressIndicator(Modifier.size(16.dp), strokeWidth = 2.dp)
+                Text(
+                    buildString {
+                        append(openingBook?.title?.take(12) ?: "书籍")
+                        append(
+                            when {
+                                ui.openingPct >= 0 -> " 下载中 ${ui.openingPct}%"
+                                ui.openingBytes > 0 -> " 下载中 ${"%.1f".format(ui.openingBytes / 1048576.0)}MB"
+                                else -> " 打开中"
+                            }
+                        )
+                    },
+                    style = MaterialTheme.typography.labelMedium,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier.padding(start = 10.dp).weight(1f),
+                )
+                Text("可继续浏览", style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant)
+            }
+        }
+    }
+    } // Box end
 
     if (detail.detail != null || detail.error != null) {
         DetailSheet(vm, detail, onOpenBook, onReadOnline) { vm.closeDetail() }
@@ -139,17 +233,40 @@ private fun LoadingFooter() {
         modifier = Modifier.fillMaxWidth().padding(12.dp).wrapContentWidth())
 }
 
+@OptIn(androidx.compose.foundation.ExperimentalFoundationApi::class)
 @Composable
-private fun BookRow(book: LibBook, vm: BookStoreViewModel, onClick: () -> Unit) {
+private fun BookRow(book: LibBook, vm: BookStoreViewModel, opening: Boolean = false, openingPct: Int = -1, openingBytes: Long = -1, onClick: () -> Unit, onLongClick: () -> Unit = {}) {
     val settings by vm.settingsSnapshot.flow.collectAsState(
         initial = com.moread.app.data.prefs.LibrarySettings.Snapshot())
     val coverUrl = remember(book.source, book.bookId, settings.token) {
         if (settings.ready) "${settings.baseUrl}/api/lib/cover/${book.source}/${book.bookId}" else null
     }
-    Row(Modifier.fillMaxWidth().clickable(onClick = onClick).padding(horizontal = 16.dp, vertical = 8.dp)) {
+    Row(Modifier.fillMaxWidth()
+        .combinedClickable(onClick = onClick, onLongClick = onLongClick)
+        .padding(horizontal = 16.dp, vertical = 8.dp)) {
         CoverImage(coverUrl, book.title, Modifier.width(64.dp).height(88.dp))
         Column(Modifier.weight(1f).padding(start = 12.dp)) {
-            Text(book.title, style = MaterialTheme.typography.titleSmall, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text(
+                    book.title,
+                    style = MaterialTheme.typography.titleSmall,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier.weight(1f, fill = false),
+                )
+                if (opening) {
+                    CircularProgressIndicator(Modifier.padding(start = 6.dp).size(14.dp), strokeWidth = 2.dp)
+                    Text(
+                        when {
+                            openingPct >= 0 -> " 下载中 $openingPct%"
+                            openingBytes > 0 -> " 下载中 ${"%.1f".format(openingBytes / 1048576.0)}MB"
+                            else -> " 打开中"
+                        },
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+            }
             Text(book.author, style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(top = 2.dp))
             Text("${book.category} · ${book.wordsText} · ${book.chapters}章",
@@ -199,70 +316,3 @@ fun CoverImage(url: String?, fallback: String, modifier: Modifier = Modifier) {
     }
 }
 
-/** 精品书籍网格：本地书库（GitHub 导入/缓存/书城下载），三列封面 + 书名。 */
-@Composable
-private fun FeaturedGrid(
-    featured: List<com.moread.app.ui.bookstore.BookStoreViewModel.FeaturedBook>,
-    onOpenBook: (Long) -> Unit,
-) {
-    if (featured.isEmpty()) {
-        Column(
-            Modifier.fillMaxSize().padding(32.dp),
-            horizontalAlignment = Alignment.CenterHorizontally,
-        ) {
-            Text("精品书架还没有书", style = MaterialTheme.typography.titleMedium)
-            Text(
-                "从书城下载或 GitHub 导入的书籍会出现在这里",
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                modifier = Modifier.padding(top = 6.dp),
-            )
-        }
-        return
-    }
-    LazyVerticalGrid(
-        columns = GridCells.Fixed(3),
-        contentPadding = PaddingValues(horizontal = 14.dp, vertical = 10.dp),
-        horizontalArrangement = Arrangement.spacedBy(12.dp),
-        verticalArrangement = Arrangement.spacedBy(14.dp),
-        modifier = Modifier.fillMaxSize(),
-    ) {
-        items(featured, key = { it.bookId }) { fb ->
-            Column(
-                horizontalAlignment = Alignment.CenterHorizontally,
-                modifier = Modifier.clickable { onOpenBook(fb.bookId) },
-            ) {
-                Box(
-                    Modifier
-                        .fillMaxWidth()
-                        .aspectRatio(0.72f)
-                        .background(
-                            androidx.compose.ui.graphics.Brush.linearGradient(
-                                listOf(Color(0xFFD7C9B8), Color(0xFFA8987F))
-                            ),
-                            RoundedCornerShape(8.dp),
-                        ),
-                    contentAlignment = Alignment.Center,
-                ) {
-                    Text(
-                        com.moread.app.core.model.TitleCleaner.clean(fb.title).take(9),
-                        color = Color.White,
-                        style = MaterialTheme.typography.labelSmall,
-                        lineHeight = 14.sp,
-                        maxLines = 3,
-                        overflow = TextOverflow.Ellipsis,
-                        textAlign = androidx.compose.ui.text.style.TextAlign.Center,
-                        modifier = Modifier.padding(horizontal = 4.dp),
-                    )
-                }
-                Text(
-                    com.moread.app.core.model.TitleCleaner.clean(fb.title),
-                    style = MaterialTheme.typography.labelSmall,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                    modifier = Modifier.padding(top = 4.dp),
-                )
-            }
-        }
-    }
-}

@@ -30,6 +30,8 @@ fun LibrarySettingsDialog(vm: BookStoreViewModel, onDismiss: () -> Unit) {
     var url by remember(settings) { mutableStateOf(settings.baseUrl) }
     var token by remember(settings) { mutableStateOf(settings.token) }
     var saved by remember { mutableStateOf(false) }
+    val readerPrefs by vm.readerPrefsFlow.collectAsState(initial = null)
+    var adult by remember(readerPrefs) { mutableStateOf(readerPrefs?.adultContent ?: false) }
 
     LaunchedEffect(saved) {
         if (saved) {
@@ -59,6 +61,19 @@ fun LibrarySettingsDialog(vm: BookStoreViewModel, onDismiss: () -> Unit) {
                     singleLine = true,
                     modifier = Modifier.fillMaxWidth().padding(top = 8.dp),
                 )
+                Row(
+                    Modifier.fillMaxWidth().padding(top = 8.dp),
+                    verticalAlignment = androidx.compose.ui.Alignment.CenterVertically,
+                ) {
+                    Text("少儿不宜", Modifier.weight(1f))
+                    androidx.compose.material3.Switch(
+                        checked = adult,
+                        onCheckedChange = {
+                            adult = it
+                            vm.setAdultContent(it)
+                        },
+                    )
+                }
             }
         },
         confirmButton = {
@@ -113,11 +128,13 @@ fun DetailSheet(
                         maxLines = 5,
                     )
                 }
-                Text(
-                    "目录（前 10 章 / 共 ${d.chaptersTotal} 章）",
-                    style = MaterialTheme.typography.titleSmall,
-                    modifier = Modifier.padding(top = 12.dp),
-                )
+                if (d.chapters.isNotEmpty()) {
+                    Text(
+                        "目录（前 10 章 / 共 ${d.chaptersTotal} 章）",
+                        style = MaterialTheme.typography.titleSmall,
+                        modifier = Modifier.padding(top = 12.dp),
+                    )
+                }
                 d.chapters.take(10).forEach { ch ->
                     Text(
                         "${ch.seq}. ${ch.title}",
@@ -150,22 +167,32 @@ fun DetailSheet(
         },
         confirmButton = {
             if (!detail.downloading) {
-                Row {
+                if (d.book.source == "github") {
+                    // GitHub 书：下载/复用整本 → 打开（回调已在主线程）
                     TextButton(onClick = {
-                        val b = d.book
                         reading = true
-                        vm.readOnline(b.source, b.bookId) { bookId ->
-                            bookId?.let(onReadOnline)
+                        vm.downloadGithubBook(d.book.bookId) { result ->
+                            result.onSuccess { bookId -> onOpenBook(bookId) }
                         }
-                    }) { Text("在线阅读") }
-                    TextButton(onClick = {
-                        vm.downloadBook { result ->
-                            downloadMsg = result.fold(
-                                onSuccess = { "已下载到本地书架" },
-                                onFailure = { "下载失败" },
-                            )
-                        }
-                    }) { Text("整本下载") }
+                    }) { Text("下载阅读") }
+                } else {
+                    Row {
+                        TextButton(onClick = {
+                            val b = d.book
+                            reading = true
+                            vm.readOnline(b.source, b.bookId) { bookId ->
+                                bookId?.let(onReadOnline)
+                            }
+                        }) { Text("在线阅读") }
+                        TextButton(onClick = {
+                            vm.downloadBook { result ->
+                                downloadMsg = result.fold(
+                                    onSuccess = { "已下载到本地书架" },
+                                    onFailure = { "下载失败" },
+                                )
+                            }
+                        }) { Text("整本下载") }
+                    }
                 }
             }
         },

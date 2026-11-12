@@ -16,6 +16,7 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
 class BookStoreViewModel(app: Application) : AndroidViewModel(app) {
     private val container: AppContainer = (app as MoreadApp).container
@@ -25,6 +26,9 @@ class BookStoreViewModel(app: Application) : AndroidViewModel(app) {
 
     fun setAdultContent(on: Boolean) = viewModelScope.launch {
         container.prefs.setAdultContent(on)
+        _ui.update { it.copy(adult = on) }
+        // 开关切换立即重拉分类+列表（否则少儿不宜 tab 不出现）
+        if (snapshot.ready) refresh()
     }
 
     data class StoreUi(
@@ -42,6 +46,12 @@ class BookStoreViewModel(app: Application) : AndroidViewModel(app) {
         val hasMore: Boolean = false,
         val query: String = "",
         val adult: Boolean = false,
+        /** 正在打开在线阅读的书（source/bookId） */
+        val openingPath: String? = null,
+        /** 打开中的下载进度（-1 无进度信息） */
+        val openingPct: Int = -1,
+        /** 打开中已下载字节数（无 Content-Length 时仍有反馈） */
+        val openingBytes: Long = -1,
     )
 
     data class DetailUi(
@@ -65,9 +75,14 @@ class BookStoreViewModel(app: Application) : AndroidViewModel(app) {
 
     init {
         viewModelScope.launch {
+            var first = true
             container.prefs.flow.collect { p ->
+                val changed = !first && p.adultContent != adultOn
                 adultOn = p.adultContent
                 _ui.update { it.copy(adult = p.adultContent) }
+                first = false
+                // 开关在任何界面（含设置弹窗的另一 VM 实例）切换后，本实例立即重拉分类+列表
+                if (changed && snapshot.ready) refresh()
             }
         }
         viewModelScope.launch {
@@ -116,13 +131,16 @@ class BookStoreViewModel(app: Application) : AndroidViewModel(app) {
         val a = api ?: run { _ui.update { it.copy(needToken = true) }; return }
         viewModelScope.launch {
             _ui.update { it.copy(loading = true, error = null) }
+            // 直接读 prefs 拿成人开关：避免依赖另一个异步 collect 的时序（启动竞态会让分类按 adult=0 拉取）
+            val adultFlag = container.prefs.flow.first().adultContent
+            _ui.update { it.copy(adult = adultFlag) }
             launch {
-                runCatching { a.hotWords(adult = if (_ui.value.adult) 1 else 0) }.onSuccess { ws ->
+                runCatching { a.hotWords(adult = if (adultFlag) 1 else 0) }.onSuccess { ws ->
                     _ui.update { it.copy(hotWords = ws.take(10)) }
                 }
             }
             launch {
-                runCatching { a.categories(adult = if (_ui.value.adult) 1 else 0) }.onSuccess { cs ->
+                runCatching { a.categories(adult = if (adultFlag) 1 else 0) }.onSuccess { cs ->
                     _ui.update { it.copy(categories = cs) }
                 }
             }
@@ -212,6 +230,23 @@ class BookStoreViewModel(app: Application) : AndroidViewModel(app) {
         }
 
     fun openDetail(source: String, bookId: String) {
+        if (source == "github") {
+            // GitHub 书：本地合成详情（书城 API 没有 github 源），避免打无效请求
+            val lib = _ui.value.githubBooks.firstOrNull { it.bookId == bookId }
+                ?: _ui.value.books.firstOrNull { it.source == "github" && it.bookId == bookId }
+            _detail.value = if (lib != null) DetailUi(
+                detail = LibBookDetail(
+                    book = lib,
+                    intro = "来自 GitHub 私人书库。点击「下载阅读」拉取整本后离线可读，已下载的会直接打开。",
+                    chaptersTotal = 0,
+                    chapters = emptyList(),
+                    chapterPages = 0,
+                    currentPage = 1,
+                    sizeBytes = 0,
+                ),
+            ) else DetailUi(error = "书籍信息不存在")
+            return
+        }
         val a = api ?: return
         _detail.value = DetailUi(loading = true)
         viewModelScope.launch {
@@ -226,6 +261,9 @@ class BookStoreViewModel(app: Application) : AndroidViewModel(app) {
     /** 在线阅读：创建/复用临时书（ephemeral），返回 bookId 供导航到阅读器。 */
     fun readOnline(source: String, bookId: String, onReady: (Long?) -> Unit) {
         val a = api ?: run { onReady(null); return }
+        val libPath = "$source/$bookId"
+        _ui.update { it.copy(openingPath = libPath) }
+        // appScope：应用级，切 tab / Activity 重建不中断下载
         container.appScope.launch {
             val r = runCatching {
                 val ctx = getApplication<Application>()
@@ -241,7 +279,7 @@ class BookStoreViewModel(app: Application) : AndroidViewModel(app) {
                 }
                 // 拉目录建章节
                 val detail = a.bookDetail(source, bookId)
-                val bookId2 = db.bookDao().insert(
+                val bookId2 = com.moread.app.data.db.AppDatabase.get(getApplication()).bookDao().insert(
                     com.moread.app.data.db.BookEntity(
                         title = detail.book.title,
                         author = detail.book.author,
@@ -277,37 +315,85 @@ class BookStoreViewModel(app: Application) : AndroidViewModel(app) {
                 )
                 bookId2
             }
-            onReady(r.getOrNull())
+            _ui.update { it.copy(openingPath = null) }
+            // 回调统一回主线程（onReady 里做导航，不能在后台线程调）
+            withContext(kotlinx.coroutines.Dispatchers.Main) { onReady(r.getOrNull()) }
         }
     }
 
-    /** GitHub 书库（books-start/books）整本下载 → 导入本地书架 → 返回 bookId。 */
+    /** GitHub 书库（books-start/books）整本下载 → 导入本地书架 → 返回 bookId。
+     *  已下载过的书直接复用本地记录秒开，不重复下载。 */
     fun downloadGithubBook(path: String, onDone: (Result<Long>) -> Unit) {
-        // 应用级作用域：切后台/Activity 重建不中断下载
+        val libPath = "github/$path"
+        _ui.update { it.copy(openingPath = libPath, openingPct = -1, openingBytes = -1) }
+        // appScope：应用级保活，切 tab/页面/Activity 重建都不中断（回调已切主线程）
         container.appScope.launch {
-            onDone(runCatching {
-                // 与书城/线上书架同款 API 构建（PAT 一致，避免双源差异）
+            val result = runCatching {
+                // 10 分钟死线：慢网下分段重试最坏可达小时级，必须给用户明确的终态
+                kotlinx.coroutines.withTimeoutOrNull(10 * 60 * 1000L) {
+                val origin = "lib://$path"
+                val db = com.moread.app.data.db.AppDatabase.get(getApplication())
+                // 快路径：之前下载过且解析完成、文件还在 → 直接打开（零网络请求，秒开）
+                db.bookDao().findByOrigin(origin)?.let { existing ->
+                    if (existing.status == com.moread.app.data.db.BookEntity.STATUS_READY &&
+                        java.io.File(existing.filePath).exists()
+                    ) {
+                        android.util.Log.d("MoReadLib", "复用已下载: bookId=" + existing.id)
+                        return@withTimeoutOrNull existing.id
+                    }
+                    // 坏数据（解析失败/文件被清）→ 删掉重建
+                    db.chapterDao().deleteForBook(existing.id)
+                    db.bookDao().delete(existing.id)
+                }
+                // 慢路径：首次点击，下载整本
                 val ghApi = container.buildGithubApi()
                 val ref = com.moread.app.core.git.RepoUrlParser.parse("https://github.com/books-start/books")!!
                 val branch = ghApi.resolveBranch(ref)
-                val bytes = ghApi.fetchRaw(ref, branch, path)
-                val isGz = bytes.size >= 2 && bytes[0] == 0x1f.toByte() && bytes[1] == 0x8b.toByte()
-                val text = if (isGz) {
-                    java.util.zip.GZIPInputStream(bytes.inputStream()).readBytes().toString(Charsets.UTF_8)
-                } else {
-                    String(bytes, Charsets.UTF_8)
+                val bytes = ghApi.fetchRaw(ref, branch, path) { read, total ->
+                    _ui.update {
+                        it.copy(
+                            openingPct = if (total > 0) (read * 100 / total).toInt() else -1,
+                            openingBytes = read,
+                        )
+                    }
                 }
                 val ctx = getApplication<Application>()
                 val dir = java.io.File(ctx.filesDir, "books").apply { mkdirs() }
                 val name = path.substringAfterLast('/')
-                val safeName = name.replace(Regex("[/:*?\"<>|]"), "_")
-                val f = java.io.File(dir, "gh_${safeName}")
-                f.writeText(text, Charsets.UTF_8)
-                container.bookstore.importLocalTxt(f.absolutePath, name.substringBeforeLast('.'), "GitHub 书库")
-            }.getOrElse { e -> throw e })
+                val ext = name.substringAfterLast('.', "txt").lowercase()
+                val baseName = name.substringBeforeLast('.')
+                val safeName = baseName.replace(Regex("[/:*?\"<>|]"), "_")
+                val f = java.io.File(dir, "gh_${safeName}.${ext}")
+                f.writeBytes(bytes)
+                val format = when (ext) {
+                    "epub" -> "EPUB"
+                    "mobi", "azw", "azw3", "prc" -> "MOBI"
+                    "pdf" -> "PDF"
+                    "cbz" -> "CBZ"
+                    "cbr" -> "CBR"
+                    else -> "TXT"
+                }
+                android.util.Log.d("MoReadLib", "下载成功: " + f.absolutePath + " format=" + format)
+                val bookId = db.bookDao().insert(
+                    com.moread.app.data.db.BookEntity(
+                        title = baseName,
+                        format = format,
+                        filePath = f.absolutePath,
+                        fileSize = f.length(),
+                        origin = origin,
+                        ephemeral = true, // 点击先临时书阅读，加入书架才转正
+                    )
+                )
+                container.bookstore.reparseWithProgress(bookId) { }
+                android.util.Log.d("MoReadLib", "导入成功: bookId=" + bookId)
+                bookId
+            } ?: throw RuntimeException("下载超时（10 分钟），网络太慢，请稍后重试")
+            }
+            android.util.Log.d("MoReadLib", "downloadGithubBook 结果: " + (result.exceptionOrNull()?.message ?: "成功"))
+            _ui.update { it.copy(openingPath = null, openingPct = -1, openingBytes = -1) }
+            withContext(kotlinx.coroutines.Dispatchers.Main) { onDone(result) }
         }
     }
-
     fun downloadBook(onDone: (Result<String>) -> Unit) {
         val a = api ?: return
         val d = _detail.value.detail ?: return
