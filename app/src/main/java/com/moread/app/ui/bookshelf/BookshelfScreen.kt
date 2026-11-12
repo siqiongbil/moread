@@ -128,14 +128,9 @@ fun BookshelfScreen(
     val drawerState = androidx.compose.material3.rememberDrawerState(androidx.compose.material3.DrawerValue.Closed)
     val scope = androidx.compose.runtime.rememberCoroutineScope()
 
-    // 抽屉里的分类项：跟随当前书架
-    val drawerFormats = if (shelfTab == 1) {
-        if (online.files.isEmpty()) listOf("全部")
-        else listOf("全部") + online.files.map { extOf(it.path).uppercase() }.distinct().sorted()
-    } else {
-        listOf("全部") + books.map { it.displayFormat ?: it.format }.distinct().sorted()
-    }
-    val drawerSelected = if (shelfTab == 1) onlineFmt else localFmt
+    // 抽屉里的分类项：本地书架格式筛选
+    val drawerFormats = listOf("全部") + books.map { it.displayFormat ?: it.format }.distinct().sorted()
+    val drawerSelected = localFmt
 
     var actionBook by remember { mutableStateOf<BookEntity?>(null) }
     var renameTarget by remember { mutableStateOf<BookEntity?>(null) }
@@ -146,12 +141,6 @@ fun BookshelfScreen(
     var updating by remember { mutableStateOf(false) }
     var updateResult by remember { mutableStateOf<Result<String>?>(null) }
 
-    // 首次进入线上书架自动刷新
-    LaunchedEffect(shelfTab) {
-        if (shelfTab == 1 && online.files.isEmpty() && !online.loading && online.error == null) {
-            vm.refreshOnline()
-        }
-    }
 
     // Android 13+：前台保活服务的通知需要运行时权限（拒绝也不影响下载，仅无通知）
     val notifPerm = rememberLauncherForActivityResult(
@@ -193,7 +182,7 @@ fun BookshelfScreen(
                         label = { Text(if (f == "全部") "全部格式" else f) },
                         selected = drawerSelected == f,
                         onClick = {
-                            if (shelfTab == 1) onlineFmt = f else localFmt = f
+                            localFmt = f
                             scope.launch { drawerState.close() }
                         },
                         modifier = Modifier.padding(horizontal = 12.dp, vertical = 2.dp),
@@ -209,7 +198,7 @@ fun BookshelfScreen(
                 title = {
                     Text(
                         if (selectMode && shelfTab == 0) "已选 ${selectedIds.size} 本"
-                        else if (shelfTab == 0) "墨阅 · 书架" else if (shelfTab == 1) "墨阅 · 线上" else if (shelfTab == 1) "墨阅 · 书城" else "墨阅 · 设置",
+                        else if (shelfTab == 0) "墨阅 · 书架" else if (shelfTab == 1) "墨阅 · 书城" else "墨阅 · 设置",
                     )
                 },
                 navigationIcon = {
@@ -217,7 +206,7 @@ fun BookshelfScreen(
                         IconButton(onClick = { selectMode = false; selectedIds = emptySet() }) {
                             Icon(Icons.Filled.Close, contentDescription = "退出多选")
                         }
-                    } else if (shelfTab != 2) {
+                    } else if (shelfTab == 0) {
                         IconButton(onClick = { scope.launch { drawerState.open() } }) {
                             Icon(Icons.Filled.Menu, contentDescription = "分类")
                         }
@@ -258,11 +247,8 @@ fun BookshelfScreen(
                                 )
                             )
                         }) { Icon(Icons.Filled.Add, contentDescription = "导入书籍") }
-                    } else if (shelfTab == 1) {
-                        IconButton(onClick = vm::refreshOnline, enabled = !online.loading && online.batchTotal == 0) {
-                            Icon(Icons.Filled.Refresh, contentDescription = "刷新")
-                        }
                     }
+
                 },
             )
         },
