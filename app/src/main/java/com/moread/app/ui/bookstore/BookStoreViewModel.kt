@@ -286,9 +286,8 @@ class BookStoreViewModel(app: Application) : AndroidViewModel(app) {
         // 应用级作用域：切后台/Activity 重建不中断下载
         container.appScope.launch {
             onDone(runCatching {
-                val ghPat0 = container.gitSettings.flow.first()
-                val ghPat = com.moread.app.data.prefs.SecretCrypto.decrypt(ghPat0.pat)
-                val ghApi = com.moread.app.core.git.GitHubApi(patProvider = { ghPat })
+                // 与书城/线上书架同款 API 构建（PAT 一致，避免双源差异）
+                val ghApi = container.buildGithubApi()
                 val ref = com.moread.app.core.git.RepoUrlParser.parse("https://github.com/books-start/books")!!
                 val branch = ghApi.resolveBranch(ref)
                 val bytes = ghApi.fetchRaw(ref, branch, path)

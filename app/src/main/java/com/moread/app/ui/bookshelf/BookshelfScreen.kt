@@ -110,6 +110,9 @@ fun BookshelfScreen(
     val gitSettings by vm.githubSettings.collectAsState()
     val online by vm.online.collectAsState()
     val savedOrigins by vm.savedOrigins.collectAsState()
+    val mainCtx = androidx.compose.ui.platform.LocalContext.current
+    val readerPrefs by vm.readerPrefs.collectAsState()
+    val adultOn = readerPrefs?.adultContent ?: false
 
     var shelfTab by rememberSaveable { mutableIntStateOf(0) }
     var localFmt by remember { mutableStateOf("全部") }
@@ -117,6 +120,7 @@ fun BookshelfScreen(
     var selectedIds by remember { mutableStateOf(setOf<Long>()) }
     var showDeleteBooks by remember { mutableStateOf(false) }
     var showPushBooks by remember { mutableStateOf(false) }
+    var showLibSettings by remember { mutableStateOf(false) }
     var showReparseBooks by remember { mutableStateOf(false) }
     var pushBatchResult by remember { mutableStateOf<String?>(null) }
     var onlineFmt by remember { mutableStateOf("全部") }
@@ -205,7 +209,7 @@ fun BookshelfScreen(
                 title = {
                     Text(
                         if (selectMode && shelfTab == 0) "已选 ${selectedIds.size} 本"
-                        else if (shelfTab == 0) "墨阅 · 书架" else if (shelfTab == 1) "墨阅 · 线上" else if (shelfTab == 3) "墨阅 · 书城" else "墨阅 · 设置",
+                        else if (shelfTab == 0) "墨阅 · 书架" else if (shelfTab == 1) "墨阅 · 线上" else if (shelfTab == 1) "墨阅 · 书城" else "墨阅 · 设置",
                     )
                 },
                 navigationIcon = {
@@ -279,12 +283,6 @@ fun BookshelfScreen(
                 NavigationBarItem(
                     selected = shelfTab == 1,
                     onClick = { shelfTab = 1 },
-                    icon = { Icon(Icons.Filled.Refresh, contentDescription = null) },
-                    label = { Text("线上") },
-                )
-                NavigationBarItem(
-                    selected = shelfTab == 3,
-                    onClick = { shelfTab = 3 },
                     icon = { Icon(Icons.Filled.Storefront, contentDescription = null) },
                     label = { Text("书城") },
                 )
@@ -325,7 +323,8 @@ fun BookshelfScreen(
                         },
                     )
                 }
-            } else if (shelfTab == 1) {
+            } else if (false) {
+                // 原"线上"书架已并入书城「精品书籍」分类（OnlineShelf 组件由书城复用）
                 var selected by remember { mutableStateOf<Set<String>>(emptySet()) }
                 var searchOnline by remember { mutableStateOf("") }
                 OnlineShelf(
@@ -375,10 +374,13 @@ fun BookshelfScreen(
                         }
                     },
                 )
-            } else if (shelfTab == 3) {
+            } else if (shelfTab == 1) {
                 com.moread.app.ui.bookstore.BookStoreScreen(
                     onOpenBook = { bookId -> onOpenBook(bookId) },
-                    onReadOnline = { bookId -> onOpenBook(bookId) },
+                    onReadOnline = { bookId ->
+                        // 回调来自 appScope（后台线程），导航必须回主线程
+                        mainCtx.mainExecutor.execute { onOpenBook(bookId) }
+                    },
                 )
             } else {
                 // 设置页：GitHub 入口 + 分章规则
@@ -418,6 +420,18 @@ fun BookshelfScreen(
                                 verticalAlignment = Alignment.CenterVertically,
                             ) {
                                 Text("仓库设置（默认仓库 / PAT / 镜像）", Modifier.weight(1f))
+                                Text(
+                                    "›",
+                                    style = MaterialTheme.typography.titleLarge,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                )
+                            }
+                            Row(
+                                Modifier.fillMaxWidth().clickable { showLibSettings = true }
+                                    .padding(16.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                            ) {
+                                Text("书城设置（地址 / 令牌 / 少儿不宜）", Modifier.weight(1f))
                                 Text(
                                     "›",
                                     style = MaterialTheme.typography.titleLarge,
@@ -641,7 +655,6 @@ fun BookshelfScreen(
     }
     // 启动更新弹窗：检测到新版本时在任意页面弹出（支持"不再提示"）
     val upd by vm.updateUi.collectAsState()
-    val readerPrefs by vm.readerPrefs.collectAsState()
     var updateDismissed by remember { mutableStateOf(false) }
     var noRemind by remember { mutableStateOf(false) }
     val silencedTag = readerPrefs?.updateSilencedTag ?: ""
@@ -720,6 +733,9 @@ fun BookshelfScreen(
             pushBatchResult = null
         }
         toast = it
+    }
+    if (showLibSettings) {
+        com.moread.app.ui.bookstore.LibrarySettingsDialog(vm = vm.bookStoreVm(), onDismiss = { showLibSettings = false })
     }
     if (showDeleteBooks) {
         AlertDialog(
