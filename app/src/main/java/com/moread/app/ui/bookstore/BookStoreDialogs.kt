@@ -25,13 +25,23 @@ import com.moread.app.data.prefs.LibrarySettings
 import kotlinx.coroutines.launch
 
 @Composable
-fun LibrarySettingsDialog(vm: BookStoreViewModel, onDismiss: () -> Unit) {
+fun LibrarySettingsDialog(vm: BookStoreViewModel, gitVm: com.moread.app.ui.bookshelf.BookshelfViewModel? = null, onDismiss: () -> Unit) {
     val settings by vm.settingsSnapshot.flow.collectAsState(initial = LibrarySettings.Snapshot())
     var url by remember(settings) { mutableStateOf(settings.baseUrl) }
     var token by remember(settings) { mutableStateOf(settings.token) }
     var saved by remember { mutableStateOf(false) }
     val readerPrefs by vm.readerPrefsFlow.collectAsState(initial = null)
     var adult by remember(readerPrefs) { mutableStateOf(readerPrefs?.adultContent ?: false) }
+    // GitHub 书库配置（合并进同一弹窗）
+    val gitSnap by (gitVm?.githubSettings?.collectAsState(initial = null)
+        ?: androidx.compose.runtime.remember {
+            androidx.compose.runtime.mutableStateOf<com.moread.app.data.prefs.GitHubSettings.Snapshot?>(null)
+        })
+    var gRepo by remember(gitSnap) { mutableStateOf(gitSnap?.defaultRepo ?: "") }
+    var gPat by remember(gitSnap) { mutableStateOf(gitSnap?.pat ?: "") }
+    var gApi by remember(gitSnap) { mutableStateOf(gitSnap?.apiBase ?: "") }
+    var gRaw by remember(gitSnap) { mutableStateOf(gitSnap?.rawBase ?: "") }
+    var gReadOnly by remember(gitSnap) { mutableStateOf(gitSnap?.readOnly ?: false) }
 
     LaunchedEffect(saved) {
         if (saved) {
@@ -42,14 +52,13 @@ fun LibrarySettingsDialog(vm: BookStoreViewModel, onDismiss: () -> Unit) {
 
     AlertDialog(
         onDismissRequest = onDismiss,
-        title = { Text("书城设置") },
+        title = { Text("书源设置") },
         text = {
             Column(Modifier.verticalScroll(rememberScrollState())) {
                 OutlinedTextField(
                     value = url,
                     onValueChange = { url = it; saved = false },
                     label = { Text("书城地址") },
-                    supportingText = { Text("默认 https://195.216.150.235:7443") },
                     singleLine = true,
                     modifier = Modifier.fillMaxWidth(),
                 )
@@ -57,7 +66,6 @@ fun LibrarySettingsDialog(vm: BookStoreViewModel, onDismiss: () -> Unit) {
                     value = token,
                     onValueChange = { token = it; saved = false },
                     label = { Text("访问令牌") },
-                    supportingText = { Text("管理员发放的设备 token") },
                     singleLine = true,
                     modifier = Modifier.fillMaxWidth().padding(top = 8.dp),
                 )
@@ -74,6 +82,42 @@ fun LibrarySettingsDialog(vm: BookStoreViewModel, onDismiss: () -> Unit) {
                         },
                     )
                 }
+                if (gitVm != null) {
+                    androidx.compose.material3.HorizontalDivider(Modifier.padding(vertical = 10.dp))
+                    Text("GitHub 书库", style = MaterialTheme.typography.titleSmall)
+                    OutlinedTextField(
+                        value = gRepo, onValueChange = { gRepo = it; saved = false },
+                        label = { Text("默认仓库") },
+                        singleLine = true,
+                        modifier = Modifier.fillMaxWidth().padding(top = 6.dp),
+                    )
+                    OutlinedTextField(
+                        value = gPat, onValueChange = { gPat = it; saved = false },
+                        label = { Text("PAT") },
+                        visualTransformation = androidx.compose.ui.text.input.PasswordVisualTransformation(),
+                        singleLine = true,
+                        modifier = Modifier.fillMaxWidth().padding(top = 8.dp),
+                    )
+                    OutlinedTextField(
+                        value = gApi, onValueChange = { gApi = it; saved = false },
+                        label = { Text("API 镜像（留空默认）") },
+                        singleLine = true,
+                        modifier = Modifier.fillMaxWidth().padding(top = 8.dp),
+                    )
+                    OutlinedTextField(
+                        value = gRaw, onValueChange = { gRaw = it; saved = false },
+                        label = { Text("Raw 镜像（留空默认）") },
+                        singleLine = true,
+                        modifier = Modifier.fillMaxWidth().padding(top = 8.dp),
+                    )
+                    Row(
+                        Modifier.fillMaxWidth().padding(top = 8.dp),
+                        verticalAlignment = androidx.compose.ui.Alignment.CenterVertically,
+                    ) {
+                        Text("仅拉取模式", Modifier.weight(1f))
+                        androidx.compose.material3.Switch(checked = gReadOnly, onCheckedChange = { gReadOnly = it; saved = false })
+                    }
+                }
             }
         },
         confirmButton = {
@@ -81,6 +125,7 @@ fun LibrarySettingsDialog(vm: BookStoreViewModel, onDismiss: () -> Unit) {
                 kotlinx.coroutines.MainScope().launch {
                     vm.settings.setUrl(url)
                     vm.settings.setToken(token)
+                    gitVm?.saveGithubSettings(gPat, gApi, gRaw, gRepo, gReadOnly) { }
                     saved = true
                 }
             }) { Text(if (saved) "已保存" else "保存") }

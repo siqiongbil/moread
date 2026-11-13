@@ -124,13 +124,15 @@ fun BookshelfScreen(
     var showReparseBooks by remember { mutableStateOf(false) }
     var pushBatchResult by remember { mutableStateOf<String?>(null) }
     var onlineFmt by remember { mutableStateOf("全部") }
+    var storeSourceFilter by remember { mutableStateOf("全部") }
     var toast by remember { mutableStateOf<String?>(null) }
     val drawerState = androidx.compose.material3.rememberDrawerState(androidx.compose.material3.DrawerValue.Closed)
     val scope = androidx.compose.runtime.rememberCoroutineScope()
 
-    // 抽屉里的分类项：本地书架格式筛选
-    val drawerFormats = listOf("全部") + books.map { it.displayFormat ?: it.format }.distinct().sorted()
-    val drawerSelected = localFmt
+    // 抽屉里的分类项：书架=本地格式筛选；书城=源筛选（GitHub 源 / 书城源）
+    val drawerFormats = if (shelfTab == 1) listOf("全部", "GitHub 源", "书城源")
+    else listOf("全部") + books.map { it.displayFormat ?: it.format }.distinct().sorted()
+    val drawerSelected = if (shelfTab == 1) storeSourceFilter else localFmt
 
     var actionBook by remember { mutableStateOf<BookEntity?>(null) }
     var renameTarget by remember { mutableStateOf<BookEntity?>(null) }
@@ -179,10 +181,10 @@ fun BookshelfScreen(
                 )
                 drawerFormats.forEach { f ->
                     androidx.compose.material3.NavigationDrawerItem(
-                        label = { Text(if (f == "全部") "全部格式" else f) },
+                        label = { Text(if (f == "全部") "全部" else f) },
                         selected = drawerSelected == f,
                         onClick = {
-                            localFmt = f
+                            if (shelfTab == 1) storeSourceFilter = f else localFmt = f
                             scope.launch { drawerState.close() }
                         },
                         modifier = Modifier.padding(horizontal = 12.dp, vertical = 2.dp),
@@ -206,7 +208,7 @@ fun BookshelfScreen(
                         IconButton(onClick = { selectMode = false; selectedIds = emptySet() }) {
                             Icon(Icons.Filled.Close, contentDescription = "退出多选")
                         }
-                    } else if (shelfTab == 0) {
+                    } else if (shelfTab != 2) {
                         IconButton(onClick = { scope.launch { drawerState.open() } }) {
                             Icon(Icons.Filled.Menu, contentDescription = "分类")
                         }
@@ -362,6 +364,7 @@ fun BookshelfScreen(
                 )
             } else if (shelfTab == 1) {
                 com.moread.app.ui.bookstore.BookStoreScreen(
+                    sourceFilter = storeSourceFilter,
                     onOpenBook = { bookId -> onOpenBook(bookId) },
                     onReadOnline = { bookId ->
                         // 回调来自 appScope（后台线程），导航必须回主线程
@@ -401,23 +404,11 @@ fun BookshelfScreen(
                                 )
                             }
                             Row(
-                                Modifier.fillMaxWidth().clickable { showGitSettings = true }
-                                    .padding(16.dp),
-                                verticalAlignment = Alignment.CenterVertically,
-                            ) {
-                                Text("仓库设置（默认仓库 / PAT / 镜像）", Modifier.weight(1f))
-                                Text(
-                                    "›",
-                                    style = MaterialTheme.typography.titleLarge,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                )
-                            }
-                            Row(
                                 Modifier.fillMaxWidth().clickable { showLibSettings = true }
                                     .padding(16.dp),
                                 verticalAlignment = Alignment.CenterVertically,
                             ) {
-                                Text("书城设置（地址 / 令牌 / 少儿不宜）", Modifier.weight(1f))
+                                Text("书源设置", Modifier.weight(1f))
                                 Text(
                                     "›",
                                     style = MaterialTheme.typography.titleLarge,
@@ -598,9 +589,7 @@ fun BookshelfScreen(
             onDismiss = { showGithubImport = false },
         )
     }
-    if (showGitSettings) {
-        GithubSettingsDialog(vm = vm, onDismiss = { showGitSettings = false })
-    }
+
     if (showReparseBooks) {
         AlertDialog(
             onDismissRequest = { showReparseBooks = false },
@@ -721,7 +710,7 @@ fun BookshelfScreen(
         toast = it
     }
     if (showLibSettings) {
-        com.moread.app.ui.bookstore.LibrarySettingsDialog(vm = vm.bookStoreVm(), onDismiss = { showLibSettings = false })
+        com.moread.app.ui.bookstore.LibrarySettingsDialog(vm = vm.bookStoreVm(), gitVm = vm, onDismiss = { showLibSettings = false })
     }
     if (showDeleteBooks) {
         AlertDialog(

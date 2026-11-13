@@ -40,7 +40,7 @@ import java.net.URL
 
 @OptIn(ExperimentalMaterial3Api::class, androidx.compose.foundation.ExperimentalFoundationApi::class)
 @Composable
-fun BookStoreScreen(onOpenBook: (Long) -> Unit, onReadOnline: (Long) -> Unit) {
+fun BookStoreScreen(sourceFilter: String = "全部", onOpenBook: (Long) -> Unit, onReadOnline: (Long) -> Unit) {
     val vm: BookStoreViewModel = viewModel()
     val ui by vm.ui.collectAsState()
     val detail by vm.detail.collectAsState()
@@ -114,7 +114,14 @@ fun BookStoreScreen(onOpenBook: (Long) -> Unit, onReadOnline: (Long) -> Unit) {
                 )
             }
             else -> LazyColumn(state = listState, modifier = Modifier.fillMaxSize()) {
-                items(ui.books, key = { "${it.source}/${it.bookId}" }) { book ->
+                items(
+                    ui.books.filter {
+                        sourceFilter == "全部" ||
+                            (sourceFilter == "GitHub 源" && it.source == "github") ||
+                            (sourceFilter == "书城源" && it.source != "github")
+                    },
+                    key = { "${it.source}/${it.bookId}" },
+                ) { book ->
                     val navCtx = LocalContext.current
                     val thisPath = "${book.source}/${book.bookId}"
                     val isOpening = ui.openingPath == thisPath
