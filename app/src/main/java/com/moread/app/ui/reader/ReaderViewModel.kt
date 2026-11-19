@@ -211,7 +211,7 @@ class ReaderViewModel(
             saveProgress()
         } else if (st.chapterIndex > 0) {
             val prevIdx = st.chapterIndex - 1
-            val cached = ensureChapter(prevIdx)
+            val cached = ensureChapterSafe(prevIdx, prefetchNeighbors = false) ?: return@launch
             jumpTo(prevIdx, cached.pages.size - 1, animate = if (fromTap) -1 else 0)
         }
     }
@@ -219,7 +219,7 @@ class ReaderViewModel(
     fun jumpTo(chapterIdx: Int, page: Int, animate: Int = 0) = viewModelScope.launch {
         if (chapters.isEmpty()) return@launch
         val idx = chapterIdx.coerceIn(0, chapters.size - 1)
-        val cached = ensureChapter(idx)
+        val cached = ensureChapterSafe(idx) ?: return@launch
         _ui.update {
             it.copy(
                 chapterIndex = idx,
@@ -241,7 +241,7 @@ class ReaderViewModel(
             if (target < chapters[i].charCount) { idx = i; break }
             target -= chapters[i].charCount
         }
-        val cached = ensureChapter(idx)
+        val cached = ensureChapterSafe(idx) ?: return@launch
         val normOff = if (cached.entity.charCount > 0) {
             target.toFloat() / cached.entity.charCount * cached.normalizedLen
         } else 0f
@@ -338,6 +338,19 @@ class ReaderViewModel(
         viewModelScope.launch { withContext(Dispatchers.IO) { block() } }
     }
 
+    /** ensureChapter 的安全版：网络失败（书城 502/超时等）不闪退，落到错误态提示。 */
+    private suspend fun ensureChapterSafe(idx: Int, prefetchNeighbors: Boolean = true): CachedChapter? =
+        try {
+            ensureChapter(idx, prefetchNeighbors)
+        } catch (c: kotlinx.coroutines.CancellationException) {
+            throw c
+        } catch (t: Throwable) {
+            _ui.update {
+                it.copy(loading = false, error = "章节加载失败：${t.message ?: "网络错误"}（书城服务可能维护中）")
+            }
+            null
+        }
+
     private suspend fun ensureChapter(idx: Int, prefetchNeighbors: Boolean = true): CachedChapter {
         chapterCache[idx]?.let { return it }
         val b = book ?: error("书未加载")
@@ -394,7 +407,7 @@ class ReaderViewModel(
                 if (target < chapters[i].charCount) { rIdx = i; break }
                 target -= chapters[i].charCount
             }
-            val rCached = ensureChapter(rIdx)
+            val rCached = ensureChapterSafe(rIdx, prefetchNeighbors = false) ?: return
             val normOff = if (rCached.entity.charCount > 0) {
                 target.toFloat() / rCached.entity.charCount * rCached.normalizedLen + 1f // +1 容差抵消浮点舍入
             } else 0f
@@ -403,7 +416,7 @@ class ReaderViewModel(
         }
 
         val idx = _ui.value.chapterIndex
-        val cached = chapterCache[idx] ?: ensureChapter(idx)
+        val cached = chapterCache[idx] ?: ensureChapterSafe(idx) ?: return
         val pages = cached.pages
         val pageIdx = _ui.value.pageIndex.coerceIn(0, pages.size - 1)
 
