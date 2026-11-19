@@ -344,7 +344,7 @@ class ReaderViewModel(
         val src = source ?: error("书源未初始化")
         val entity = chapters.getOrNull(idx) ?: chapters.first()
         val text = withContext(Dispatchers.IO) {
-            src.openChapterText(
+            val raw = src.openChapterText(
                 ChapterBound(
                     index = entity.index,
                     title = entity.title,
@@ -356,6 +356,8 @@ class ReaderViewModel(
                 ),
                 b.charset,
             )
+            // 中文排版规范化：段首统一两格缩进、折叠空行、剥标题装饰（所有书源共用）
+            com.moread.app.core.text.ChineseTypography.normalize(raw)
         }
         val m = metrics ?: Paginator.Metrics(viewportW.takeIf { it > 0 } ?: 1080,
             viewportH.takeIf { it > 0 } ?: 1800, prefs.fontSizeSp * density, prefs.lineSpacing)
