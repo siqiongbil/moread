@@ -7,6 +7,7 @@ import com.moread.app.core.model.RulePattern
 import com.moread.app.core.model.SplitResult
 import com.moread.app.core.model.TocLevel
 import com.moread.app.core.model.VolumeInfo
+import com.moread.app.core.text.ChineseTypography
 
 /**
  * TXT 自动分章引擎。
@@ -33,7 +34,9 @@ class ChapterSplitter {
         val volumeRules = rules.filter { it.enabled && it.level == TocLevel.VOLUME }
             .sortedBy { it.sortOrder }
 
-        val materialized = lines.toList()
+        // 书城整书下载的标题行带 "======== 第X章 ========" 装饰，与排版层（ChineseTypography）
+        // 同口径剥壳后再匹配，否则 ^第 锚定规则全部失配，整书退化成按字数强切
+        val materialized = lines.map { it.copy(text = ChineseTypography.unwrapDecorated(it.text)) }.toList()
         // 智能嗅探优先：序号连续链质量过关则直接采用（对“乱七八糟”的章节标记最鲁棒）
         SmartChapters.detect(materialized, totalChars)?.let { smart ->
             return buildFromHeadings(
@@ -56,7 +59,10 @@ class ChapterSplitter {
 
     /** 规则测试用：返回某条规则的命中数与标题列表（供规则管理页预览）。 */
     fun preview(lines: Sequence<LineInfo>, rule: RulePattern): Pair<Int, List<String>> {
-        val headings = matchRule(lines.toList(), rule)
+        val headings = matchRule(
+            lines.map { it.copy(text = ChineseTypography.unwrapDecorated(it.text)) }.toList(),
+            rule,
+        )
         return headings.size to headings.map { it.title }
     }
 
@@ -149,8 +155,12 @@ class ChapterSplitter {
             }
         }
 
-        // 3) 重排编号
-        val mutableChapters = bounds.mapIndexed { i, c -> c.copy(index = i) }.toMutableList()
+        // 3) 超长章保护：标题稀疏的命中（如正文里偶发的“第X章”句）会造出数十万字的巨章，
+        //    按行边界以 6 万字续切（排版内存红线，与 EPUB 超大章切分同口径命名）
+        val bounded = sliceOversized(bounds, lines)
+
+        // 4) 重排编号
+        val mutableChapters = bounded.mapIndexed { i, c -> c.copy(index = i) }.toMutableList()
         val volumes = if (volumeHeadings != null) assignVolumes(volumeHeadings, mutableChapters) else emptyList()
 
         return SplitResult(
@@ -229,6 +239,45 @@ class ChapterSplitter {
             )
         }
         return SplitResult(chapters, emptyList(), null, FALLBACK_NAME, true)
+    }
+
+    /** 章长上限：超过则在行边界切成多段，命名“标题（k/n）”（EPUB 超大章同款）。 */
+    private fun sliceOversized(bounds: List<ChapterBound>, lines: List<LineInfo>): List<ChapterBound> {
+        if (bounds.none { it.charCount > WHOLE_BOOK_MAX_CHARS }) return bounds
+        val out = ArrayList<ChapterBound>(bounds.size)
+        for (b in bounds) {
+            if (b.charCount <= WHOLE_BOOK_MAX_CHARS) {
+                out += b
+                continue
+            }
+            // 章内行首偏移即合法切点；越过 6 万字红线前，在最后一个行边界切一刀
+            val cuts = ArrayList<Int>()
+            var segStart = b.startOffset
+            var lastInside = segStart
+            for (off in lines.map { it.charOffset }) {
+                when {
+                    off <= segStart || off >= b.endOffset -> Unit
+                    off - segStart < WHOLE_BOOK_MAX_CHARS -> lastInside = off
+                    else -> {
+                        // 正常在未超限的最后行边界切；单行即超限的病态行只能在该行行尾切
+                        val cut = if (lastInside > segStart) lastInside else off
+                        cuts += cut
+                        segStart = cut
+                        lastInside = cut
+                    }
+                }
+            }
+            val ends = cuts + b.endOffset
+            val n = ends.size
+            var start = b.startOffset
+            for (k in ends.indices) {
+                val end = ends[k]
+                val label = if (n > 1) "${b.title}（${k + 1}/$n）" else b.title
+                out += ChapterBound(out.size, label, start, end, end - start, b.volumeIndex)
+                start = end
+            }
+        }
+        return out
     }
 
     private fun hasOversizedChapter(headings: List<Heading>): Boolean {

@@ -213,4 +213,47 @@ class ChapterSplitterTest {
         assertEquals(3, count)
         assertEquals(listOf("第一章 a", "第二章 b", "第三章 c"), titles)
     }
+
+    @Test
+    fun `装饰包裹标题可分章`() {
+        // 书城整书下载格式：标题行带 ======== 装饰，规则仍应命中且标题剥壳
+        val content = buildString {
+            for (i in 1..4) {
+                append("======== 第${i}章 风起${i} ========\n")
+                append(para(20))
+            }
+        }
+        val result = splitOf(content)
+        assertTrue(!result.fallbackBySize)
+        assertEquals(
+            listOf("第1章 风起1", "第2章 风起2", "第3章 风起3", "第4章 风起4"),
+            result.chapters.map { it.title },
+        )
+        // 偏移仍指向原始装饰行行首，正文零丢失
+        val (_, total) = LineScanner.fromString(content)
+        assertEquals(total, result.chapters.sumOf { it.charCount })
+        assertEquals(total, result.chapters.last().endOffset)
+    }
+
+    @Test
+    fun `超长章按行边界续切`() {
+        // 标题稀疏的巨章（如正文里偶发“第X章”句）不得超过 6 万字一段
+        val bigSeg = buildString { repeat(700) { append(para(6)) } } // ≈7.6 万字
+        val content = buildString {
+            append("第一章 长\n").append(bigSeg)
+            append("第二章 短\n").append(para(4))
+            append("第三章 短\n").append(para(4))
+        }
+        val result = splitOf(content)
+        assertEquals(
+            listOf("第一章 长（1/2）", "第一章 长（2/2）", "第二章 短", "第三章 短"),
+            result.chapters.map { it.title },
+        )
+        assertTrue(result.chapters.all { it.charCount <= ChapterSplitter.WHOLE_BOOK_MAX_CHARS })
+        val (_, total) = LineScanner.fromString(content)
+        assertEquals(total, result.chapters.sumOf { it.charCount })
+        for (i in 0 until result.chapters.size - 1) {
+            assertEquals(result.chapters[i].endOffset, result.chapters[i + 1].startOffset)
+        }
+    }
 }
