@@ -47,3 +47,4 @@ crash_log.txt
 app/src/test/resources/novel_sample.txt
 *.py
 keystore_b64.txt
+LIBRARY_API_PUBLIC.md
