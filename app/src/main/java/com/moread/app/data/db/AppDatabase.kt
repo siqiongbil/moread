@@ -12,7 +12,7 @@ import androidx.sqlite.db.SupportSQLiteDatabase
         BookEntity::class, ChapterEntity::class, ProgressEntity::class,
         RuleEntity::class, BookmarkEntity::class,
     ],
-    version = 7,
+    version = 8,
     exportSchema = false,
 )
 abstract class AppDatabase : RoomDatabase() {
@@ -46,6 +46,13 @@ abstract class AppDatabase : RoomDatabase() {
             }
         }
 
+        /** v7 → v8：books.srvUpdated（书城书服务器副本指纹，追更对比用） */
+        private val MIGRATION_7_8 = object : Migration(7, 8) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE `books` ADD COLUMN `srvUpdated` TEXT")
+            }
+        }
+
         fun get(context: Context): AppDatabase =
             instance ?: synchronized(this) {
                 instance ?: Room.databaseBuilder(
@@ -53,7 +60,7 @@ abstract class AppDatabase : RoomDatabase() {
                     AppDatabase::class.java,
                     "moread.db",
                 )
-                    .addMigrations(MIGRATION_5_6, MIGRATION_6_7)
+                    .addMigrations(MIGRATION_5_6, MIGRATION_6_7, MIGRATION_7_8)
                     // 未登记的更早结构变更仍直接重建（开发期历史版本）
                     .fallbackToDestructiveMigration()
                     .build().also { instance = it }

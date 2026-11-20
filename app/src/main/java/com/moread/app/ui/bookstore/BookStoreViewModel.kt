@@ -419,6 +419,10 @@ class BookStoreViewModel(app: Application) : AndroidViewModel(app) {
                         db.chapterDao().deleteForBook(existing.id)
                         db.bookDao().delete(existing.id)
                     }
+                    // 先取元信息记录服务器副本指纹（updated 时间戳），供书架追更对比
+                    val srvUpdated = runCatching {
+                        a.bookDetail(book.source, book.bookId, page = 1, size = 1).book.updated
+                    }.getOrDefault("")
                     val data = a.download(book.source, book.bookId) { read, total ->
                         if (total > 0) {
                             _ui.update { it.copy(openingPct = (read * 100 / total).toInt(), openingBytes = read) }
@@ -445,6 +449,7 @@ class BookStoreViewModel(app: Application) : AndroidViewModel(app) {
                             fileSize = f.length(),
                             origin = origin,
                             ephemeral = false, // 自动加入书架
+                            srvUpdated = srvUpdated.ifBlank { null },
                         )
                     )
                     container.bookstore.reparseWithProgress(bookId) { }
@@ -483,7 +488,10 @@ class BookStoreViewModel(app: Application) : AndroidViewModel(app) {
                     val bid = o.removePrefix("lib://").substringAfter('/')
                     val detail = runCatching { a.bookDetail(src, bid, page = 1, size = 1) }.getOrNull() ?: continue
                     val serverChapters = detail.chaptersTotal
-                    val need = b.format == "LIBRARY" || (serverChapters > b.chapterCount)
+                    // 三种落后：旧在线书 / 章节更多 / 服务器副本指纹变化（同章数但清理修订过文本）
+                    val need = b.format == "LIBRARY" ||
+                        serverChapters > b.chapterCount ||
+                        (detail.book.updated.isNotBlank() && detail.book.updated != b.srvUpdated)
                     if (!need) continue
                     outdated++
                     runCatching {
@@ -499,9 +507,12 @@ class BookStoreViewModel(app: Application) : AndroidViewModel(app) {
                         val safeName = b.title.replace(Regex("[/:*?\"<>|]"), "_")
                         val f = java.io.File(dir, "lib_${safeName}.txt")
                         f.writeText(text, Charsets.UTF_8)
-                        // 原位更新：保 bookId/进度/书架位置，仅换内容载体
+                        // 原位更新：保 bookId/进度/书架位置，仅换内容载体并记录新副本指纹
                         db.bookDao().update(
-                            b.copy(format = "TXT", filePath = f.absolutePath, fileSize = f.length(), ephemeral = false)
+                            b.copy(
+                                format = "TXT", filePath = f.absolutePath, fileSize = f.length(),
+                                ephemeral = false, srvUpdated = detail.book.updated.ifBlank { null },
+                            )
                         )
                         container.bookstore.reparse(b.id).getOrThrow()
                         updated++

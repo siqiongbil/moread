@@ -25,6 +25,8 @@ data class BookEntity(
     val displayFormat: String? = null,
     /** 临时书：线上点读的会话副本（存 cacheDir，不进书架列表，进度照常记录） */
     val ephemeral: Boolean = false,
+    /** 书城书上次同步时的服务器 updated 时间戳：不一致=服务器副本有修订（如清理垃圾文本），追更时重下 */
+    val srvUpdated: String? = null,
 ) {
     companion object {
         const val STATUS_PARSING = 0
