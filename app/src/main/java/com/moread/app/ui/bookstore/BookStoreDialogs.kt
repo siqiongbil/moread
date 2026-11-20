@@ -224,12 +224,15 @@ fun DetailSheet(
                                 android.widget.Toast.LENGTH_SHORT,
                             ).show()
                         }
+                        val busy = {
+                            android.widget.Toast.makeText(ctx2, "该书正在下载中，请稍候", android.widget.Toast.LENGTH_SHORT).show()
+                        }
                         if (d.book.source == "github") {
-                            vm.downloadGithubBook(d.book.bookId, onShelved = shelved) { result ->
+                            vm.downloadGithubBook(d.book.bookId, onShelved = shelved, onBusy = busy) { result ->
                                 result.onSuccess { bookId -> onOpenBook(bookId) }
                             }
                         } else {
-                            vm.downloadApiBook(d.book, onShelved = shelved) { result ->
+                            vm.downloadApiBook(d.book, onShelved = shelved, onBusy = busy) { result ->
                                 result.onSuccess { bookId -> onOpenBook(bookId) }
                             }
                         }

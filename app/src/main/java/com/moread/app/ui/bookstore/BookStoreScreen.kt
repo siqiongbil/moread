@@ -163,10 +163,13 @@ fun BookStoreScreen(sourceFilter: String = "全部", onOpenBook: (Long) -> Unit,
                                     android.widget.Toast.LENGTH_SHORT,
                                 ).show()
                             }
+                            val busy = {
+                                android.widget.Toast.makeText(navCtx, "该书正在下载中，请稍候", android.widget.Toast.LENGTH_SHORT).show()
+                            }
                             if (book.source == "github") {
-                                vm.downloadGithubBook(book.bookId, onShelved = shelved) { handleDl(navCtx, onOpenBook, it) }
+                                vm.downloadGithubBook(book.bookId, onShelved = shelved, onBusy = busy) { handleDl(navCtx, onOpenBook, it) }
                             } else {
-                                vm.downloadApiBook(book, onShelved = shelved) { handleDl(navCtx, onOpenBook, it) }
+                                vm.downloadApiBook(book, onShelved = shelved, onBusy = busy) { handleDl(navCtx, onOpenBook, it) }
                             }
                         },
                         onLongClick = { vm.openDetail(book.source, book.bookId) },

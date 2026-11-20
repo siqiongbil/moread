@@ -335,14 +335,15 @@ class BookStoreViewModel(app: Application) : AndroidViewModel(app) {
     fun downloadGithubBook(
         path: String,
         onShelved: ((Boolean) -> Unit)? = null,
+        onBusy: (() -> Unit)? = null,
         onDone: (Result<Long>) -> Unit,
     ) {
         val libPath = "github/$path"
         val existing = inflight.putIfAbsent(libPath, DlProgress(-1, -1))
         if (existing != null) {
-            if (libPath !in pendingOpens) pendingOpens.add(libPath)
-            openCallbacks[libPath] = onDone
+            // 同书二次点击：正在下载——不重复下载，提示并把进度条切回这本书
             _ui.update { it.copy(openingPath = libPath, openingPct = existing.pct, openingBytes = existing.bytes) }
+            onBusy?.invoke()
             return
         }
         if (libPath !in pendingOpens) pendingOpens.add(libPath)
@@ -422,16 +423,16 @@ class BookStoreViewModel(app: Application) : AndroidViewModel(app) {
     fun downloadApiBook(
         book: LibBook,
         onShelved: ((Boolean) -> Unit)? = null,
+        onBusy: (() -> Unit)? = null,
         onDone: (Result<Long>) -> Unit,
     ) {
         val a = api ?: run { onDone(Result.failure(IllegalStateException("书城未配置"))); return }
         val libPath = "${book.source}/${book.bookId}"
         val existing = inflight.putIfAbsent(libPath, DlProgress(-1, -1))
         if (existing != null) {
-            // 同书二次点击：挂接现有下载——不重复下载、不拒绝；排队打开并把进度条切回这本书
-            if (libPath !in pendingOpens) pendingOpens.add(libPath)
-            openCallbacks[libPath] = onDone
+            // 同书二次点击：正在下载——不重复下载，提示并把进度条切回这本书
             _ui.update { it.copy(openingPath = libPath, openingPct = existing.pct, openingBytes = existing.bytes) }
+            onBusy?.invoke()
             return
         }
         if (libPath !in pendingOpens) pendingOpens.add(libPath)
