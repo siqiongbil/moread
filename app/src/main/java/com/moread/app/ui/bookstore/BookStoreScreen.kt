@@ -38,6 +38,23 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import java.net.URL
 
+
+private fun handleDl(
+    navCtx: android.content.Context,
+    onOpenBook: (Long) -> Unit,
+    result: Result<Long>,
+) {
+    result.onSuccess { bookId ->
+        navCtx.mainExecutor.execute { onOpenBook(bookId) }
+    }.onFailure { e ->
+        navCtx.mainExecutor.execute {
+            android.widget.Toast.makeText(
+                navCtx, "打开失败：" + (e.message ?: "网络错误"), android.widget.Toast.LENGTH_LONG
+            ).show()
+        }
+    }
+}
+
 @OptIn(ExperimentalMaterial3Api::class, androidx.compose.foundation.ExperimentalFoundationApi::class)
 @Composable
 fun BookStoreScreen(sourceFilter: String = "全部", onOpenBook: (Long) -> Unit, onReadOnline: (Long) -> Unit) {
@@ -135,26 +152,14 @@ fun BookStoreScreen(sourceFilter: String = "全部", onOpenBook: (Long) -> Unit,
                             val open: (Long) -> Unit = { id ->
                                 navCtx.mainExecutor.execute { onOpenBook(id) }
                             }
-                            if (book.source == "github") {
-                                // GitHub 书库：下载整本 → 本地书架 → 打开
-                                vm.downloadGithubBook(book.bookId) { result ->
-                                    result.onSuccess { bookId ->
-                                        navCtx.mainExecutor.execute { onOpenBook(bookId) }
-                                    }.onFailure { e ->
-                                        navCtx.mainExecutor.execute {
-                                            android.widget.Toast.makeText(
-                                                navCtx, "打开失败：" + (e.message ?: "网络错误"), android.widget.Toast.LENGTH_LONG
-                                            ).show()
-                                        }
-                                    }
+                            // 两源统一：整本下载 → 自动入书架 → 打开（已下载的复用秒开，纯本地阅读）
+                            val downloader: () -> Unit =
+                                if (book.source == "github") {
+                                    { vm.downloadGithubBook(book.bookId) { handleDl(navCtx, onOpenBook, it) } }
+                                } else {
+                                    { vm.downloadApiBook(book) { handleDl(navCtx, onOpenBook, it) } }
                                 }
-                            } else {
-                                vm.readOnline(book.source, book.bookId) { id: Long? ->
-                                    id?.let { o ->
-                                        navCtx.mainExecutor.execute { onReadOnline(o) }
-                                    }
-                                }
-                            }
+                            downloader()
                         },
                         onLongClick = { vm.openDetail(book.source, book.bookId) },
                     )

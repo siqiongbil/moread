@@ -338,6 +338,10 @@ class BookStoreViewModel(app: Application) : AndroidViewModel(app) {
                     if (existing.status == com.moread.app.data.db.BookEntity.STATUS_READY &&
                         java.io.File(existing.filePath).exists()
                     ) {
+                        // 旧会话的临时书 → 转正入书架
+                        if (existing.ephemeral) {
+                            db.bookDao().update(existing.copy(ephemeral = false))
+                        }
                         android.util.Log.d("MoReadLib", "复用已下载: bookId=" + existing.id)
                         return@withTimeoutOrNull existing.id
                     }
@@ -381,7 +385,7 @@ class BookStoreViewModel(app: Application) : AndroidViewModel(app) {
                         filePath = f.absolutePath,
                         fileSize = f.length(),
                         origin = origin,
-                        ephemeral = true, // 点击先临时书阅读，加入书架才转正
+                        ephemeral = false, // 点击即下载入库、自动加入书架（可管理可删除）
                     )
                 )
                 container.bookstore.reparseWithProgress(bookId) { }
@@ -394,6 +398,65 @@ class BookStoreViewModel(app: Application) : AndroidViewModel(app) {
             withContext(kotlinx.coroutines.Dispatchers.Main) { onDone(result) }
         }
     }
+    /** 书城 API 书整本下载 → 本地 TXT 入书架 → 返回 bookId。已下载的直接复用秒开。 */
+    fun downloadApiBook(book: LibBook, onDone: (Result<Long>) -> Unit) {
+        val a = api ?: run { onDone(Result.failure(IllegalStateException("书城未配置"))); return }
+        val libPath = "${book.source}/${book.bookId}"
+        _ui.update { it.copy(openingPath = libPath, openingPct = -1, openingBytes = -1) }
+        container.appScope.launch {
+            val result = runCatching {
+                kotlinx.coroutines.withTimeoutOrNull(10 * 60 * 1000L) {
+                    val origin = "lib://${book.source}/${book.bookId}"
+                    val db = com.moread.app.data.db.AppDatabase.get(getApplication())
+                    db.bookDao().findByOrigin(origin)?.let { existing ->
+                        if (existing.status == com.moread.app.data.db.BookEntity.STATUS_READY &&
+                            java.io.File(existing.filePath).exists()
+                        ) {
+                            if (existing.ephemeral) db.bookDao().update(existing.copy(ephemeral = false))
+                            android.util.Log.d("MoReadLib", "复用已下载(api): bookId=" + existing.id)
+                            return@withTimeoutOrNull existing.id
+                        }
+                        db.chapterDao().deleteForBook(existing.id)
+                        db.bookDao().delete(existing.id)
+                    }
+                    val data = a.download(book.source, book.bookId) { read, total ->
+                        if (total > 0) {
+                            _ui.update { it.copy(openingPct = (read * 100 / total).toInt(), openingBytes = read) }
+                        }
+                    }
+                    // 服务端无 gz 存量时回纯文本兜底——按 gzip magic 判断是否需要解压
+                    val isGz = data.size >= 2 && data[0] == 0x1f.toByte() && data[1] == 0x8b.toByte()
+                    val text = if (isGz) {
+                        java.util.zip.GZIPInputStream(data.inputStream()).readBytes().toString(Charsets.UTF_8)
+                    } else {
+                        String(data, Charsets.UTF_8)
+                    }
+                    val ctx = getApplication<Application>()
+                    val dir = java.io.File(ctx.filesDir, "books").apply { mkdirs() }
+                    val safeName = book.title.replace(Regex("[/:*?\"<>|]"), "_")
+                    val f = java.io.File(dir, "lib_${safeName}.txt")
+                    f.writeText(text, Charsets.UTF_8)
+                    val bookId = db.bookDao().insert(
+                        com.moread.app.data.db.BookEntity(
+                            title = book.title,
+                            author = book.author,
+                            format = "TXT",
+                            filePath = f.absolutePath,
+                            fileSize = f.length(),
+                            origin = origin,
+                            ephemeral = false, // 自动加入书架
+                        )
+                    )
+                    container.bookstore.reparseWithProgress(bookId) { }
+                    android.util.Log.d("MoReadLib", "下载入库(api): bookId=" + bookId)
+                    bookId
+                } ?: throw RuntimeException("下载超时（10 分钟），请稍后重试")
+            }
+            _ui.update { it.copy(openingPath = null, openingPct = -1, openingBytes = -1) }
+            withContext(kotlinx.coroutines.Dispatchers.Main) { onDone(result) }
+        }
+    }
+
     fun downloadBook(onDone: (Result<String>) -> Unit) {
         val a = api ?: return
         val d = _detail.value.detail ?: return

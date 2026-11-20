@@ -212,32 +212,27 @@ fun DetailSheet(
         },
         confirmButton = {
             if (!detail.downloading) {
-                if (d.book.source == "github") {
-                    // GitHub 书：下载/复用整本 → 打开（回调已在主线程）
+                Row {
                     TextButton(onClick = {
                         reading = true
-                        vm.downloadGithubBook(d.book.bookId) { result ->
-                            result.onSuccess { bookId -> onOpenBook(bookId) }
+                        if (d.book.source == "github") {
+                            vm.downloadGithubBook(d.book.bookId) { result ->
+                                result.onSuccess { bookId -> onOpenBook(bookId) }
+                            }
+                        } else {
+                            vm.downloadApiBook(d.book) { result ->
+                                result.onSuccess { bookId -> onOpenBook(bookId) }
+                            }
                         }
                     }) { Text("下载阅读") }
-                } else {
-                    Row {
-                        TextButton(onClick = {
-                            val b = d.book
-                            reading = true
-                            vm.readOnline(b.source, b.bookId) { bookId ->
-                                bookId?.let(onReadOnline)
-                            }
-                        }) { Text("在线阅读") }
-                        TextButton(onClick = {
-                            vm.downloadBook { result ->
-                                downloadMsg = result.fold(
-                                    onSuccess = { "已下载到本地书架" },
-                                    onFailure = { "下载失败" },
-                                )
-                            }
-                        }) { Text("整本下载") }
-                    }
+                    TextButton(onClick = {
+                        vm.downloadBook { result ->
+                            downloadMsg = result.fold(
+                                onSuccess = { "已下载到本地书架" },
+                                onFailure = { "下载失败" },
+                            )
+                        }
+                    }) { Text("整本下载") }
                 }
             }
         },
