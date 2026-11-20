@@ -71,10 +71,12 @@ class BookStoreViewModel(app: Application) : AndroidViewModel(app) {
     private var api: LibraryApi? = null
     private var snapshot: LibrarySettings.Snapshot = LibrarySettings.Snapshot()
 
-    // ---- 并发下载管理：多本书可同时下载，只有"最后点击的那本"完成时才自动跳转 ----
+    // ---- 并发下载管理：多本书并行下载；自动打开遵循"第一本点击的书优先"（FIFO），
+    //      同书二次点击=挂接现有下载（不重复、不拒绝），全部下载完成即入书架 ----
     private data class DlProgress(val pct: Int, val bytes: Long)
     private val inflight = java.util.concurrent.ConcurrentHashMap<String, DlProgress>()
-    private val navTicket = java.util.concurrent.atomic.AtomicLong(0)
+    private val pendingOpens = java.util.concurrent.ConcurrentLinkedQueue<String>()
+    private val openCallbacks = java.util.concurrent.ConcurrentHashMap<String, (Result<Long>) -> Unit>()
     /** 追更防重入 */
     private val updating = java.util.concurrent.atomic.AtomicBoolean(false)
     /** 成人内容开关（从 ReaderPrefs 收集） */
@@ -336,11 +338,15 @@ class BookStoreViewModel(app: Application) : AndroidViewModel(app) {
         onDone: (Result<Long>) -> Unit,
     ) {
         val libPath = "github/$path"
-        if (inflight.putIfAbsent(libPath, DlProgress(-1, -1)) != null) {
-            onDone(Result.failure(IllegalStateException("该书正在下载中")))
+        val existing = inflight.putIfAbsent(libPath, DlProgress(-1, -1))
+        if (existing != null) {
+            if (libPath !in pendingOpens) pendingOpens.add(libPath)
+            openCallbacks[libPath] = onDone
+            _ui.update { it.copy(openingPath = libPath, openingPct = existing.pct, openingBytes = existing.bytes) }
             return
         }
-        val ticket = navTicket.incrementAndGet()
+        if (libPath !in pendingOpens) pendingOpens.add(libPath)
+        openCallbacks[libPath] = onDone
         _ui.update { it.copy(openingPath = libPath, openingPct = -1, openingBytes = -1) }
         // appScope：应用级保活，切 tab/页面/Activity 重建都不中断（回调已切主线程）
         container.appScope.launch {
@@ -409,7 +415,7 @@ class BookStoreViewModel(app: Application) : AndroidViewModel(app) {
             } ?: throw RuntimeException("下载超时（10 分钟），网络太慢，请稍后重试")
             }
             android.util.Log.d("MoReadLib", "downloadGithubBook 结果: " + (result.exceptionOrNull()?.message ?: "成功"))
-            finishDl(libPath, ticket, result, onDone, onShelved)
+            finishDl(libPath, 0L, result, onDone, onShelved)
         }
     }
     /** 书城 API 书整本下载 → 本地 TXT 入书架 → 返回 bookId。已下载的直接复用秒开。 */
@@ -420,11 +426,16 @@ class BookStoreViewModel(app: Application) : AndroidViewModel(app) {
     ) {
         val a = api ?: run { onDone(Result.failure(IllegalStateException("书城未配置"))); return }
         val libPath = "${book.source}/${book.bookId}"
-        if (inflight.putIfAbsent(libPath, DlProgress(-1, -1)) != null) {
-            onDone(Result.failure(IllegalStateException("该书正在下载中")))
+        val existing = inflight.putIfAbsent(libPath, DlProgress(-1, -1))
+        if (existing != null) {
+            // 同书二次点击：挂接现有下载——不重复下载、不拒绝；排队打开并把进度条切回这本书
+            if (libPath !in pendingOpens) pendingOpens.add(libPath)
+            openCallbacks[libPath] = onDone
+            _ui.update { it.copy(openingPath = libPath, openingPct = existing.pct, openingBytes = existing.bytes) }
             return
         }
-        val ticket = navTicket.incrementAndGet()
+        if (libPath !in pendingOpens) pendingOpens.add(libPath)
+        openCallbacks[libPath] = onDone
         _ui.update { it.copy(openingPath = libPath, openingPct = -1, openingBytes = -1) }
         container.appScope.launch {
             val result = runCatching {
@@ -484,11 +495,12 @@ class BookStoreViewModel(app: Application) : AndroidViewModel(app) {
                     bookId
                 } ?: throw RuntimeException("下载超时（10 分钟），请稍后重试")
             }
-            finishDl(libPath, ticket, result, onDone, onShelved)
+            finishDl(libPath, 0L, result, onDone, onShelved)
         }
     }
 
-    /** 下载收尾：清理 inflight；最后点击的书跳转，其余静默入架；进度条切到剩余任务。 */
+    /** 下载收尾：清理 inflight；队首（第一本点击的书）完成即跳转并出队，
+     *  非队首完成→静默入书架；进度条切到剩余下载任务。 */
     private suspend fun finishDl(
         libPath: String,
         ticket: Long,
@@ -497,8 +509,10 @@ class BookStoreViewModel(app: Application) : AndroidViewModel(app) {
         onShelved: ((Boolean) -> Unit)?,
     ) {
         inflight.remove(libPath)
-        val isCurrent = ticket == navTicket.get()
-        if (isCurrent) {
+        val cb = openCallbacks.remove(libPath) ?: onDone
+        val isHead = pendingOpens.peek() == libPath
+        if (isHead) {
+            pendingOpens.poll()
             // 进度条切到另一本仍在下载的书（若有），否则隐藏
             val next = inflight.keys.firstOrNull()
             val st = next?.let { inflight[it] }
@@ -509,12 +523,18 @@ class BookStoreViewModel(app: Application) : AndroidViewModel(app) {
                     openingBytes = st?.bytes ?: -1,
                 )
             }
-            withContext(kotlinx.coroutines.Dispatchers.Main) { onDone(result) }
+            withContext(kotlinx.coroutines.Dispatchers.Main) { cb(result) }
         } else {
-            // 非当前书：不抢跳转。成功→已入书架；失败→仅在无 onShelved 时回退 onDone 提示
+            // 非队首（后点的书先下完）：不抢跳转，静默入架
+            pendingOpens.remove(libPath)
+            if (_ui.value.openingPath == libPath) {
+                val next = inflight.keys.firstOrNull()
+                val st = next?.let { inflight[it] }
+                _ui.update { it.copy(openingPath = next, openingPct = st?.pct ?: -1, openingBytes = st?.bytes ?: -1) }
+            }
             withContext(kotlinx.coroutines.Dispatchers.Main) {
                 if (onShelved != null) onShelved(result.isSuccess)
-                else if (result.isFailure) onDone(result)
+                else if (result.isFailure) cb(result)
             }
         }
     }

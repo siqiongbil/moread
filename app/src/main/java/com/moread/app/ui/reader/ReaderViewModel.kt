@@ -56,6 +56,8 @@ class ReaderViewModel(
         val menuVisible: Boolean = false,
         val tocVisible: Boolean = false,
         val loading: Boolean = true,
+        /** 首页排版中（大书分页耗时，给出"正在打开"指示避免白屏） */
+        val rendering: Boolean = false,
         val error: String? = null,
         /** 当前位置对应的全书进度（0..1） */
         val progressRatio: Float = 0f,
@@ -392,6 +394,15 @@ class ReaderViewModel(
     }
 
     private suspend fun render(animate: Int) {
+        _ui.update { it.copy(rendering = true) }
+        try {
+            renderInner(animate)
+        } finally {
+            _ui.update { it.copy(rendering = false) }
+        }
+    }
+
+    private suspend fun renderInner(animate: Int) {
         val m = metrics ?: return
         val st = _ui.value
         if (chapters.isEmpty()) return

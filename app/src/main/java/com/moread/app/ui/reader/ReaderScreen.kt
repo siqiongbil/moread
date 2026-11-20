@@ -248,8 +248,14 @@ fun ReaderScreen(onBack: () -> Unit) {
             )
         }
 
-        if (ui.loading) {
+        if (ui.loading || ui.rendering) {
             CircularProgressIndicator(Modifier.align(Alignment.Center), color = theme.dim)
+            Text(
+                if (ui.loading) "正在加载…" else "正在排版…",
+                color = theme.dim,
+                style = MaterialTheme.typography.labelMedium,
+                modifier = Modifier.align(Alignment.Center).padding(top = 72.dp),
+            )
         }
         ui.error?.let { err ->
             Text(
