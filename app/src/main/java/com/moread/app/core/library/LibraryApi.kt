@@ -224,7 +224,7 @@ class LibraryApi(private val baseUrl: String, private val token: String) {
     suspend fun download(source: String, bookId: String, onProgress: ((Long, Long) -> Unit)? = null): ByteArray =
         withContext(Dispatchers.IO) {
             // 整本下载专用：长超时（家庭宽带上行慢）
-            val dlClient = pinnedClient!!.newBuilder()
+            val dlClient = (pinnedClient ?: createPinnedClient()).newBuilder()
                 .readTimeout(300, TimeUnit.SECONDS)
                 .build()
             dlClient.newCall(

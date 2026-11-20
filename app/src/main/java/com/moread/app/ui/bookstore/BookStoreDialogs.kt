@@ -149,7 +149,8 @@ fun DetailSheet(
             onDismiss()
         }
     }
-    val d = detail.detail ?: return
+    val ctxDl = androidx.compose.ui.platform.LocalContext.current
+        val d = detail.detail ?: return
     var downloadMsg by remember { mutableStateOf<String?>(null) }
 
     AlertDialog(
@@ -215,12 +216,20 @@ fun DetailSheet(
                 Row {
                     TextButton(onClick = {
                         reading = true
+                        val ctx2 = ctxDl
+                        val shelved: (Boolean) -> Unit = { ok ->
+                            android.widget.Toast.makeText(
+                                ctx2,
+                                if (ok) "《${d.book.title.take(12)}》已下载加入书架" else "下载失败",
+                                android.widget.Toast.LENGTH_SHORT,
+                            ).show()
+                        }
                         if (d.book.source == "github") {
-                            vm.downloadGithubBook(d.book.bookId) { result ->
+                            vm.downloadGithubBook(d.book.bookId, onShelved = shelved) { result ->
                                 result.onSuccess { bookId -> onOpenBook(bookId) }
                             }
                         } else {
-                            vm.downloadApiBook(d.book) { result ->
+                            vm.downloadApiBook(d.book, onShelved = shelved) { result ->
                                 result.onSuccess { bookId -> onOpenBook(bookId) }
                             }
                         }

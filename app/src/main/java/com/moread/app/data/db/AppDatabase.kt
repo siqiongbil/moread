@@ -61,8 +61,11 @@ abstract class AppDatabase : RoomDatabase() {
                     "moread.db",
                 )
                     .addMigrations(MIGRATION_5_6, MIGRATION_6_7, MIGRATION_7_8)
-                    // 未登记的更早结构变更仍直接重建（开发期历史版本）
-                    .fallbackToDestructiveMigration()
+                    .let { b ->
+                        // 破坏性重建仅限 debug：release 漏写迁移时宁可崩溃暴露，
+                        // 也不能静默清空用户书架（书架=用户数据，丢库是最坏结果）
+                        if (com.moread.app.BuildConfig.DEBUG) b.fallbackToDestructiveMigration() else b
+                    }
                     .build().also { instance = it }
             }
     }

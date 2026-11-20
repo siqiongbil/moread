@@ -70,6 +70,13 @@ class BookStoreViewModel(app: Application) : AndroidViewModel(app) {
 
     private var api: LibraryApi? = null
     private var snapshot: LibrarySettings.Snapshot = LibrarySettings.Snapshot()
+
+    // ---- 并发下载管理：多本书可同时下载，只有"最后点击的那本"完成时才自动跳转 ----
+    private data class DlProgress(val pct: Int, val bytes: Long)
+    private val inflight = java.util.concurrent.ConcurrentHashMap<String, DlProgress>()
+    private val navTicket = java.util.concurrent.atomic.AtomicLong(0)
+    /** 追更防重入 */
+    private val updating = java.util.concurrent.atomic.AtomicBoolean(false)
     /** 成人内容开关（从 ReaderPrefs 收集） */
     private var adultOn: Boolean = false
 
@@ -323,8 +330,17 @@ class BookStoreViewModel(app: Application) : AndroidViewModel(app) {
 
     /** GitHub 书库（books-start/books）整本下载 → 导入本地书架 → 返回 bookId。
      *  已下载过的书直接复用本地记录秒开，不重复下载。 */
-    fun downloadGithubBook(path: String, onDone: (Result<Long>) -> Unit) {
+    fun downloadGithubBook(
+        path: String,
+        onShelved: ((Boolean) -> Unit)? = null,
+        onDone: (Result<Long>) -> Unit,
+    ) {
         val libPath = "github/$path"
+        if (inflight.putIfAbsent(libPath, DlProgress(-1, -1)) != null) {
+            onDone(Result.failure(IllegalStateException("该书正在下载中")))
+            return
+        }
+        val ticket = navTicket.incrementAndGet()
         _ui.update { it.copy(openingPath = libPath, openingPct = -1, openingBytes = -1) }
         // appScope：应用级保活，切 tab/页面/Activity 重建都不中断（回调已切主线程）
         container.appScope.launch {
@@ -354,11 +370,10 @@ class BookStoreViewModel(app: Application) : AndroidViewModel(app) {
                 val ref = com.moread.app.core.git.RepoUrlParser.parse("https://github.com/books-start/books")!!
                 val branch = ghApi.resolveBranch(ref)
                 val bytes = ghApi.fetchRaw(ref, branch, path) { read, total ->
-                    _ui.update {
-                        it.copy(
-                            openingPct = if (total > 0) (read * 100 / total).toInt() else -1,
-                            openingBytes = read,
-                        )
+                    val st = DlProgress(if (total > 0) (read * 100 / total).toInt() else -1, read)
+                    inflight[libPath] = st
+                    if (_ui.value.openingPath == libPath) {
+                        _ui.update { it.copy(openingPct = st.pct, openingBytes = st.bytes) }
                     }
                 }
                 val ctx = getApplication<Application>()
@@ -394,14 +409,22 @@ class BookStoreViewModel(app: Application) : AndroidViewModel(app) {
             } ?: throw RuntimeException("下载超时（10 分钟），网络太慢，请稍后重试")
             }
             android.util.Log.d("MoReadLib", "downloadGithubBook 结果: " + (result.exceptionOrNull()?.message ?: "成功"))
-            _ui.update { it.copy(openingPath = null, openingPct = -1, openingBytes = -1) }
-            withContext(kotlinx.coroutines.Dispatchers.Main) { onDone(result) }
+            finishDl(libPath, ticket, result, onDone, onShelved)
         }
     }
     /** 书城 API 书整本下载 → 本地 TXT 入书架 → 返回 bookId。已下载的直接复用秒开。 */
-    fun downloadApiBook(book: LibBook, onDone: (Result<Long>) -> Unit) {
+    fun downloadApiBook(
+        book: LibBook,
+        onShelved: ((Boolean) -> Unit)? = null,
+        onDone: (Result<Long>) -> Unit,
+    ) {
         val a = api ?: run { onDone(Result.failure(IllegalStateException("书城未配置"))); return }
         val libPath = "${book.source}/${book.bookId}"
+        if (inflight.putIfAbsent(libPath, DlProgress(-1, -1)) != null) {
+            onDone(Result.failure(IllegalStateException("该书正在下载中")))
+            return
+        }
+        val ticket = navTicket.incrementAndGet()
         _ui.update { it.copy(openingPath = libPath, openingPct = -1, openingBytes = -1) }
         container.appScope.launch {
             val result = runCatching {
@@ -425,13 +448,17 @@ class BookStoreViewModel(app: Application) : AndroidViewModel(app) {
                     }.getOrDefault("")
                     val data = a.download(book.source, book.bookId) { read, total ->
                         if (total > 0) {
-                            _ui.update { it.copy(openingPct = (read * 100 / total).toInt(), openingBytes = read) }
+                            val st = DlProgress((read * 100 / total).toInt(), read)
+                            inflight[libPath] = st
+                            if (_ui.value.openingPath == libPath) {
+                                _ui.update { it.copy(openingPct = st.pct, openingBytes = st.bytes) }
+                            }
                         }
                     }
                     // 服务端无 gz 存量时回纯文本兜底——按 gzip magic 判断是否需要解压
                     val isGz = data.size >= 2 && data[0] == 0x1f.toByte() && data[1] == 0x8b.toByte()
                     val text = if (isGz) {
-                        java.util.zip.GZIPInputStream(data.inputStream()).readBytes().toString(Charsets.UTF_8)
+                        com.moread.app.core.text.SafeGzip.gunzipToString(data)
                     } else {
                         String(data, Charsets.UTF_8)
                     }
@@ -457,8 +484,38 @@ class BookStoreViewModel(app: Application) : AndroidViewModel(app) {
                     bookId
                 } ?: throw RuntimeException("下载超时（10 分钟），请稍后重试")
             }
-            _ui.update { it.copy(openingPath = null, openingPct = -1, openingBytes = -1) }
+            finishDl(libPath, ticket, result, onDone, onShelved)
+        }
+    }
+
+    /** 下载收尾：清理 inflight；最后点击的书跳转，其余静默入架；进度条切到剩余任务。 */
+    private suspend fun finishDl(
+        libPath: String,
+        ticket: Long,
+        result: Result<Long>,
+        onDone: (Result<Long>) -> Unit,
+        onShelved: ((Boolean) -> Unit)?,
+    ) {
+        inflight.remove(libPath)
+        val isCurrent = ticket == navTicket.get()
+        if (isCurrent) {
+            // 进度条切到另一本仍在下载的书（若有），否则隐藏
+            val next = inflight.keys.firstOrNull()
+            val st = next?.let { inflight[it] }
+            _ui.update {
+                it.copy(
+                    openingPath = next,
+                    openingPct = st?.pct ?: -1,
+                    openingBytes = st?.bytes ?: -1,
+                )
+            }
             withContext(kotlinx.coroutines.Dispatchers.Main) { onDone(result) }
+        } else {
+            // 非当前书：不抢跳转。成功→已入书架；失败→仅在无 onShelved 时回退 onDone 提示
+            withContext(kotlinx.coroutines.Dispatchers.Main) {
+                if (onShelved != null) onShelved(result.isSuccess)
+                else if (result.isFailure) onDone(result)
+            }
         }
     }
 
@@ -468,6 +525,11 @@ class BookStoreViewModel(app: Application) : AndroidViewModel(app) {
      */
     fun updateLibraryBooks(onDone: (String) -> Unit) {
         val a = api ?: run { onDone("书城未配置"); return }
+        // 防重入：连点"检查更新"只跑一个循环，避免同书并发写文件/重分章
+        if (!updating.compareAndSet(false, true)) {
+            onDone("正在检查更新，请稍候")
+            return
+        }
         container.appScope.launch {
             val msg = runCatching {
                 val db = com.moread.app.data.db.AppDatabase.get(getApplication())
@@ -498,7 +560,7 @@ class BookStoreViewModel(app: Application) : AndroidViewModel(app) {
                         val data = a.download(src, bid)
                         val isGz = data.size >= 2 && data[0] == 0x1f.toByte() && data[1] == 0x8b.toByte()
                         val text = if (isGz) {
-                            java.util.zip.GZIPInputStream(data.inputStream()).readBytes().toString(Charsets.UTF_8)
+                            com.moread.app.core.text.SafeGzip.gunzipToString(data)
                         } else {
                             String(data, Charsets.UTF_8)
                         }
@@ -526,6 +588,7 @@ class BookStoreViewModel(app: Application) : AndroidViewModel(app) {
                     }
                 }
             }.getOrElse { e -> "检查更新失败：${e.message ?: "网络错误"}" }
+            updating.set(false)
             withContext(kotlinx.coroutines.Dispatchers.Main) { onDone(msg) }
         }
     }
@@ -542,7 +605,7 @@ class BookStoreViewModel(app: Application) : AndroidViewModel(app) {
                 // 服务端无 gz 存量时回纯文本兜底——按 gzip magic 判断是否需要解压
                 val isGz = data.size >= 2 && data[0] == 0x1f.toByte() && data[1] == 0x8b.toByte()
                 val text = if (isGz) {
-                    java.util.zip.GZIPInputStream(data.inputStream()).readBytes().toString(Charsets.UTF_8)
+                    com.moread.app.core.text.SafeGzip.gunzipToString(data)
                 } else {
                     String(data, Charsets.UTF_8)
                 }

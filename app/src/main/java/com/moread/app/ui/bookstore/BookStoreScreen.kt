@@ -153,13 +153,21 @@ fun BookStoreScreen(sourceFilter: String = "全部", onOpenBook: (Long) -> Unit,
                                 navCtx.mainExecutor.execute { onOpenBook(id) }
                             }
                             // 两源统一：整本下载 → 自动入书架 → 打开（已下载的复用秒开，纯本地阅读）
-                            val downloader: () -> Unit =
-                                if (book.source == "github") {
-                                    { vm.downloadGithubBook(book.bookId) { handleDl(navCtx, onOpenBook, it) } }
-                                } else {
-                                    { vm.downloadApiBook(book) { handleDl(navCtx, onOpenBook, it) } }
-                                }
-                            downloader()
+                            // 并发语义：下载中点其他书 → 各自并行下载；只有最后点的这本完成后跳转，
+                            // 其余完成时提示"已入书架"，互不抢跳转、也不重复下载
+                            val shelved: (Boolean) -> Unit = { ok ->
+                                android.widget.Toast.makeText(
+                                    navCtx,
+                                    if (ok) "《${book.title.take(12)}》已下载加入书架"
+                                    else "《${book.title.take(12)}》下载失败",
+                                    android.widget.Toast.LENGTH_SHORT,
+                                ).show()
+                            }
+                            if (book.source == "github") {
+                                vm.downloadGithubBook(book.bookId, onShelved = shelved) { handleDl(navCtx, onOpenBook, it) }
+                            } else {
+                                vm.downloadApiBook(book, onShelved = shelved) { handleDl(navCtx, onOpenBook, it) }
+                            }
                         },
                         onLongClick = { vm.openDetail(book.source, book.bookId) },
                     )

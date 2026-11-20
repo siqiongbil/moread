@@ -502,7 +502,7 @@ class ReaderViewModel(
                 val data = api.download(src, bookId)
                 val isGz = data.size >= 2 && data[0] == 0x1f.toByte() && data[1] == 0x8b.toByte()
                 val text = if (isGz) {
-                    java.util.zip.GZIPInputStream(data.inputStream()).readBytes().toString(Charsets.UTF_8)
+                    com.moread.app.core.text.SafeGzip.gunzipToString(data)
                 } else {
                     String(data, Charsets.UTF_8)
                 }
