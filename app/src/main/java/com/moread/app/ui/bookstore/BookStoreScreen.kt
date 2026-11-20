@@ -147,7 +147,6 @@ fun BookStoreScreen(sourceFilter: String = "全部", onOpenBook: (Long) -> Unit,
                         openingPct = ui.openingPct,
                         openingBytes = ui.openingBytes,
                         onClick = {
-                            if (isOpening) return@BookRow
                             // 回调可能在后台线程（appScope），导航必须回主线程
                             val open: (Long) -> Unit = { id ->
                                 navCtx.mainExecutor.execute { onOpenBook(id) }
