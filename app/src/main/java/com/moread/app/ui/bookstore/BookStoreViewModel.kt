@@ -457,6 +457,68 @@ class BookStoreViewModel(app: Application) : AndroidViewModel(app) {
         }
     }
 
+    /**
+     * 书架追更（书城源书）：对比服务器章节数，落后的整本重下并原位重分章。
+     * 兼容旧版在线书（format=LIBRARY）：转成本地 TXT 入库。
+     */
+    fun updateLibraryBooks(onDone: (String) -> Unit) {
+        val a = api ?: run { onDone("书城未配置"); return }
+        container.appScope.launch {
+            val msg = runCatching {
+                val db = com.moread.app.data.db.AppDatabase.get(getApplication())
+                // 书城源书：origin=lib://source/bookId（GitHub 书的 bookId 带扩展名，排除）
+                val targets = db.bookDao().getAll().filter { b ->
+                    val o = b.origin ?: return@filter false
+                    b.status == com.moread.app.data.db.BookEntity.STATUS_READY &&
+                        o.startsWith("lib://") &&
+                        !o.substringAfter("lib://").substringAfter('/', "").contains('.')
+                }
+                if (targets.isEmpty()) return@runCatching "书架没有书城来源的书"
+                var outdated = 0
+                var updated = 0
+                val errs = ArrayList<String>()
+                for (b in targets) {
+                    val o = b.origin ?: continue
+                    val src = o.removePrefix("lib://").substringBefore('/')
+                    val bid = o.removePrefix("lib://").substringAfter('/')
+                    val detail = runCatching { a.bookDetail(src, bid, page = 1, size = 1) }.getOrNull() ?: continue
+                    val serverChapters = detail.chaptersTotal
+                    val need = b.format == "LIBRARY" || (serverChapters > b.chapterCount)
+                    if (!need) continue
+                    outdated++
+                    runCatching {
+                        val data = a.download(src, bid)
+                        val isGz = data.size >= 2 && data[0] == 0x1f.toByte() && data[1] == 0x8b.toByte()
+                        val text = if (isGz) {
+                            java.util.zip.GZIPInputStream(data.inputStream()).readBytes().toString(Charsets.UTF_8)
+                        } else {
+                            String(data, Charsets.UTF_8)
+                        }
+                        val ctx = getApplication<Application>()
+                        val dir = java.io.File(ctx.filesDir, "books").apply { mkdirs() }
+                        val safeName = b.title.replace(Regex("[/:*?\"<>|]"), "_")
+                        val f = java.io.File(dir, "lib_${safeName}.txt")
+                        f.writeText(text, Charsets.UTF_8)
+                        // 原位更新：保 bookId/进度/书架位置，仅换内容载体
+                        db.bookDao().update(
+                            b.copy(format = "TXT", filePath = f.absolutePath, fileSize = f.length(), ephemeral = false)
+                        )
+                        container.bookstore.reparse(b.id).getOrThrow()
+                        updated++
+                    }.onFailure { e -> errs += "${b.title}: ${e.message ?: "失败"}" }
+                }
+                buildString {
+                    when {
+                        outdated == 0 -> append("书城书籍均已是最新（${targets.size} 本）")
+                        errs.isEmpty() -> append("已更新 $updated 本到最新")
+                        else -> append("已更新 $updated 本；${errs.size} 本失败：${errs.first()}")
+                    }
+                }
+            }.getOrElse { e -> "检查更新失败：${e.message ?: "网络错误"}" }
+            withContext(kotlinx.coroutines.Dispatchers.Main) { onDone(msg) }
+        }
+    }
+
     fun downloadBook(onDone: (Result<String>) -> Unit) {
         val a = api ?: return
         val d = _detail.value.detail ?: return

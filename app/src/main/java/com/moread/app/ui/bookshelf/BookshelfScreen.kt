@@ -160,6 +160,16 @@ fun BookshelfScreen(
         }
     }
 
+    // 进入书架时自动静默追更（每会话一次；书城源书落后于服务器时原位重下）
+    var shelfUpdateDone by remember { mutableStateOf(false) }
+    LaunchedEffect(shelfTab) {
+        if (shelfTab == 0 && !shelfUpdateDone) {
+            shelfUpdateDone = true
+            vm.bookStoreVm().updateLibraryBooks { msg ->
+                if (msg.contains("已更新")) toast = msg // 静默：仅真有更新时提示
+            }
+        }
+    }
     val importLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.OpenMultipleDocuments()
     ) { uris ->
@@ -233,6 +243,11 @@ fun BookshelfScreen(
                             enabled = selectedIds.isNotEmpty(),
                         ) { Icon(Icons.Filled.Delete, contentDescription = "删除所选") }
                     } else if (shelfTab == 0) {
+                        // 书城源书追更：手动检查（进入书架时也会自动静默查一次）
+                        IconButton(onClick = {
+                            toast = "正在检查更新…"
+                            vm.bookStoreVm().updateLibraryBooks { msg -> toast = msg }
+                        }) { Icon(Icons.Filled.Refresh, contentDescription = "检查更新") }
                         IconButton(
                             onClick = { selectMode = true; selectedIds = emptySet() },
                             enabled = books.isNotEmpty(),
